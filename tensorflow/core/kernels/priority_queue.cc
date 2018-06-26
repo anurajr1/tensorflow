@@ -22,7 +22,6 @@ limitations under the License.
 #include "tensorflow/core/framework/tensor.h"
 #include "tensorflow/core/framework/tensor_shape.h"
 #include "tensorflow/core/framework/types.h"
-#include "tensorflow/core/kernels/batch_util.h"
 #include "tensorflow/core/kernels/priority_queue.h"
 #include "tensorflow/core/kernels/queue_base.h"
 #include "tensorflow/core/lib/core/errors.h"
@@ -30,6 +29,7 @@ limitations under the License.
 #include "tensorflow/core/platform/logging.h"
 #include "tensorflow/core/platform/mutex.h"
 #include "tensorflow/core/platform/types.h"
+#include "tensorflow/core/util/batch_util.h"
 
 namespace tensorflow {
 
@@ -123,7 +123,7 @@ Status PriorityQueue::GetElementComponentFromBatch(
   TF_RETURN_IF_ERROR(ctx->allocate_persistent(
       tuple[component].dtype(), element_shape, out_tensor, &element_access));
   TF_RETURN_IF_ERROR(
-      CopySliceToElement(tuple[component], element_access, index));
+      batch_util::CopySliceToElement(tuple[component], element_access, index));
   return Status::OK();
 }
 

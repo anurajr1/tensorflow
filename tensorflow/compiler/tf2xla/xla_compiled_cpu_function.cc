@@ -29,7 +29,7 @@ XlaCompiledCpuFunction::XlaCompiledCpuFunction(const StaticData& static_data,
       arg_names_(static_data.arg_names),
       result_names_(static_data.result_names),
       program_shape_(static_data.program_shape),
-      hlo_profile_printer_(static_data.hlo_profile_printer) {
+      hlo_profile_printer_data_(static_data.hlo_profile_printer_data) {
   // Allocate arg and temp buffers.
   if (alloc_mode == AllocMode::ARGS_RESULTS_PROFILES_AND_TEMPS) {
     alloc_args_ = tensorflow::tfcompile::runtime::MallocContiguousBuffers(
@@ -39,11 +39,6 @@ XlaCompiledCpuFunction::XlaCompiledCpuFunction(const StaticData& static_data,
   alloc_temps_ = tensorflow::tfcompile::runtime::MallocContiguousBuffers(
       static_data.temp_sizes, static_data.num_temps, temps_,
       /*annotate_initialized=*/true);
-
-  // The runtime context is always the last arg, if it is required.
-  if (static_data.requires_runtime_context) {
-    args_[static_data.num_args - 1] = &context_;
-  }
 
   // If Hlo profiling is enabled the generated code expects an appropriately
   // sized buffer to be passed in as the last argument.  If Hlo profiling is

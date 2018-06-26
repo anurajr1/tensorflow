@@ -36,7 +36,7 @@ namespace gpu {
 
 StatusOr<HloInstruction*> GpuCopyInsertion::FindOrInsertCopy(
     HloInstruction* hlo) {
-  HloInstruction*& copy = inserted_copies_[hlo];
+  HloInstruction*& copy = hlo_to_copy_map_[hlo];
   if (copy == nullptr) {
     TF_ASSIGN_OR_RETURN(copy, hlo->parent()->DeepCopyInstruction(hlo));
   }
@@ -49,52 +49,78 @@ StatusOr<bool> GpuCopyInsertion::Run(HloModule* module) {
   TF_ASSIGN_OR_RETURN(bool changed, generic_copy_insertion.Run(module));
 
   TF_ASSIGN_OR_RETURN(std::unique_ptr<HloDataflowAnalysis> dataflow,
-                      HloDataflowAnalysis::Run(module));
+                      HloDataflowAnalysis::Run(*module));
 
   // Make sure all operands of a library call are in memory instead of constants
-  // in IR.
-  for (HloInstruction* hlo :
-       module->entry_computation()->MakeInstructionPostOrder()) {
-    if (ImplementedAsLibraryCall(*hlo)) {
-      for (int64 i = 0; i < hlo->operand_count(); ++i) {
-        HloInstruction* operand = hlo->mutable_operand(i);
-        TF_RET_CHECK(ShapeUtil::IsArray(operand->shape()));
-        const auto& values = dataflow->GetValueSet(operand).values();
-        if (std::any_of(values.begin(), values.end(),
-                        [](const HloValue* value) {
-                          return value->defining_instruction()->opcode() ==
-                                 HloOpcode::kConstant;
-                        })) {
-          TF_ASSIGN_OR_RETURN(HloInstruction * copy, FindOrInsertCopy(operand));
-          TF_RETURN_IF_ERROR(hlo->ReplaceOperandWith(i, copy));
-          changed = true;
+  // in IR. Also, init values of while and conditional nodes cannot be
+  // constants. Insert copies for any constants found at the operands of these
+  // nodes.
+  tensorflow::gtl::FlatSet<HloInstruction*> inserted_copies;
+  for (HloComputation* computation : module->computations()) {
+    for (HloInstruction* hlo : computation->instructions()) {
+      // Inserts a copy of hlo->operand(n) if it's a constant.
+      auto copy_operand_if_constant = [&](int64 n) -> Status {
+        HloInstruction* operand = hlo->mutable_operand(n);
+        // Skip the operands that have already been replaced with a copy in a
+        // previous iteration (which is possible when a constant is used as an
+        // operand in multiple places).
+        if (ContainsKey(inserted_copies, operand)) {
+          return Status::OK();
+        }
+        for (auto& pair : dataflow->GetInstructionValueSet(operand)) {
+          const HloValueSet& value_set = pair.second;
+          for (const HloValue* value : value_set.values()) {
+            if (value->defining_instruction()->IsConstant() &&
+                !ContainsKey(hlo_to_copy_map_, value->defining_instruction())) {
+              HloInstruction* constant = value->defining_instruction();
+              TF_ASSIGN_OR_RETURN(HloInstruction * copy,
+                                  FindOrInsertCopy(constant));
+              TF_RETURN_IF_ERROR(constant->ReplaceAllUsesWith(copy));
+              inserted_copies.insert(copy);
+              changed = true;
+            }
+          }
+        }
+        return Status::OK();
+      };
+
+      if (IsCustomCallToDnnBatchNorm(*hlo)) {
+        // The epsilon and feature_index operands to a CUDNN batchnorm op don't
+        // need to be materialized in memory -- in fact, they must be constants.
+        // These are the last two operands of all three batchnorm ops.
+        for (int64 i = 0; i < hlo->operand_count() - 2; ++i) {
+          TF_RETURN_IF_ERROR(copy_operand_if_constant(i));
+        }
+      } else if (ImplementedAsLibraryCall(*hlo) ||
+                 hlo->opcode() == HloOpcode::kCrossReplicaSum ||
+                 hlo->opcode() == HloOpcode::kWhile ||
+                 hlo->opcode() == HloOpcode::kConditional) {
+        // For all other library calls, cross-replica-sum, while and conditional
+        // ops materialize all the operands into memory.  (Cross-replica-sum
+        // gets its constant args materialized even if it's not implemented as a
+        // libcall to simplify the implementation.  It's slower, but we can
+        // constant fold away constant args *anyway*, so we just need to make it
+        // work.)
+        for (int64 i = 0; i < hlo->operand_count(); ++i) {
+          TF_RETURN_IF_ERROR(copy_operand_if_constant(i));
         }
       }
     }
   }
 
-  // Init values of a while node cannot be constants. Insert copies for any
-  // constants found at the operand of a while.
-  tensorflow::gtl::FlatSet<HloInstruction*> copied_constants;
-  for (HloComputation* computation : module->computations()) {
-    for (HloInstruction* instruction : computation->instructions()) {
-      if (instruction->opcode() != HloOpcode::kWhile) {
-        continue;
-      }
-      for (auto& pair :
-               dataflow->GetInstructionValueSet(instruction->operand(0))) {
-        const HloValueSet& value_set = pair.second;
-        for (const HloValue* value : value_set.values()) {
-          if (value->defining_instruction()->opcode() ==
-              HloOpcode::kConstant &&
-              !ContainsKey(copied_constants, value->defining_instruction())) {
-            HloInstruction* constant = value->defining_instruction();
-            TF_ASSIGN_OR_RETURN(HloInstruction * copy,
-                                FindOrInsertCopy(constant));
-            TF_RETURN_IF_ERROR(constant->ReplaceAllUsesWith(copy));
-            copied_constants.insert(constant);
-            changed = true;
-          }
+  if (changed) {
+    // Check the assumption that the epsilon and feature_index constants of the
+    // CUDNN batchnorm op are not shared with other ops where we would replace
+    // them with a copy. These custom op calls are generated with the
+    // CudnnBatchNormRewriter, so this would only happen if HloCSE merges them.
+    for (HloComputation* computation : module->computations()) {
+      for (HloInstruction* hlo : computation->instructions()) {
+        if (!IsCustomCallToDnnBatchNorm(*hlo)) {
+          continue;
+        }
+        for (int64 i = hlo->operand_count() - 2; i < hlo->operand_count();
+             ++i) {
+          CHECK_EQ(hlo->operand(i)->opcode(), HloOpcode::kConstant);
         }
       }
     }

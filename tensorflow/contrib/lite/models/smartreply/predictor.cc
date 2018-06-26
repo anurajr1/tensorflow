@@ -20,8 +20,8 @@ limitations under the License.
 #include "tensorflow/contrib/lite/interpreter.h"
 #include "tensorflow/contrib/lite/kernels/register.h"
 #include "tensorflow/contrib/lite/model.h"
+#include "tensorflow/contrib/lite/op_resolver.h"
 #include "tensorflow/contrib/lite/string_util.h"
-#include "tensorflow/contrib/lite/tools/mutable_op_resolver.h"
 
 void RegisterSelectedOps(::tflite::MutableOpResolver* resolver);
 
@@ -30,7 +30,7 @@ namespace custom {
 namespace smartreply {
 
 // Split sentence into segments (using punctuation).
-std::vector<string> SplitSentence(const string& input) {
+std::vector<std::string> SplitSentence(const std::string& input) {
   string result(input);
 
   RE2::GlobalReplace(&result, "([?.!,])+", " \\1");
@@ -38,12 +38,13 @@ std::vector<string> SplitSentence(const string& input) {
   RE2::GlobalReplace(&result, "[ ]+", " ");
   RE2::GlobalReplace(&result, "\t+$", "");
 
-  return strings::Split(result, '\t');
+  return absl::StrSplit(result, '\t');
 }
 
 // Predict with TfLite model.
-void ExecuteTfLite(const string& sentence, ::tflite::Interpreter* interpreter,
-                   std::map<string, float>* response_map) {
+void ExecuteTfLite(const std::string& sentence,
+                   ::tflite::Interpreter* interpreter,
+                   std::map<std::string, float>* response_map) {
   {
     TfLiteTensor* input = interpreter->tensor(interpreter->inputs()[0]);
     tflite::DynamicBuffer buf;
@@ -67,8 +68,8 @@ void ExecuteTfLite(const string& sentence, ::tflite::Interpreter* interpreter,
 }
 
 void GetSegmentPredictions(
-    const std::vector<string>& input, const ::tflite::FlatBufferModel& model,
-    const SmartReplyConfig& config,
+    const std::vector<std::string>& input,
+    const ::tflite::FlatBufferModel& model, const SmartReplyConfig& config,
     std::vector<PredictorResponse>* predictor_responses) {
   // Initialize interpreter
   std::unique_ptr<::tflite::Interpreter> interpreter;
@@ -82,10 +83,10 @@ void GetSegmentPredictions(
   }
 
   // Execute Tflite Model
-  std::map<string, float> response_map;
-  std::vector<string> sentences;
-  for (const string& str : input) {
-    std::vector<string> splitted_str = SplitSentence(str);
+  std::map<std::string, float> response_map;
+  std::vector<std::string> sentences;
+  for (const std::string& str : input) {
+    std::vector<std::string> splitted_str = SplitSentence(str);
     sentences.insert(sentences.end(), splitted_str.begin(), splitted_str.end());
   }
   for (const auto& sentence : sentences) {
@@ -103,11 +104,11 @@ void GetSegmentPredictions(
             });
 
   // Add backoff response.
-  for (const string& backoff : config.backoff_responses) {
+  for (const auto& backoff : config.backoff_responses) {
     if (predictor_responses->size() >= config.num_response) {
       break;
     }
-    predictor_responses->push_back({backoff, config.backoff_confidence});
+    predictor_responses->emplace_back(backoff, config.backoff_confidence);
   }
 }
 

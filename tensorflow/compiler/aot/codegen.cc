@@ -19,6 +19,7 @@ limitations under the License.
 #include <utility>
 #include <vector>
 
+#include "tensorflow/compiler/aot/embedded_protocol_buffers.h"
 #include "tensorflow/compiler/aot/runtime.h"
 #include "tensorflow/compiler/tf2xla/str_util.h"
 #include "tensorflow/compiler/tf2xla/tf2xla_util.h"
@@ -101,21 +102,8 @@ Status ComputeArgSizes(const CompileResult& compile_result,
                        std::vector<int64>* arg_sizes) {
   const xla::ProgramShape& ps = compile_result.program_shape;
   for (int i = 0; i < ps.parameters_size(); ++i) {
-    if (i == ps.parameters_size() - 1 && compile_result.has_context_arg) {
-      // If the compiled function needs a XlaLocalRuntimeContext* arg, it's
-      // always last, and must be represented as an opaque type.
-      const xla::PrimitiveType type = ps.parameters(i).element_type();
-      if (type != xla::OPAQUE) {
-        return errors::InvalidArgument(
-            "expected final context arg to be opaque, but got type: ",
-            xla::PrimitiveType_Name(type), ", from program shape: ",
-            xla::ShapeUtil::HumanString(ps));
-      }
-      arg_sizes->push_back(-1);
-    } else {
-      arg_sizes->push_back(xla::ShapeUtil::ByteSizeOf(
-          ps.parameters(i), compile_result.pointer_size));
-    }
+    arg_sizes->push_back(xla::ShapeUtil::ByteSizeOf(
+        ps.parameters(i), compile_result.pointer_size));
   }
   return Status::OK();
 }
@@ -165,11 +153,6 @@ string RewriteWithName(const string& name, string code,
 Status GenArgMethods(const tf2xla::Config& config, const xla::ProgramShape& ps,
                      const CompileResult& compile_result, string* methods) {
   size_t num_args = ps.parameters_size();
-  if (compile_result.has_context_arg) {
-    // If the compiled function needs a XlaLocalRuntimeContext* arg, it's
-    // always last, and is set in the class constructor.
-    num_args--;
-  }
   if (config.feed_size() != num_args) {
     return errors::InvalidArgument("mismatch between feed_size(",
                                    config.feed_size(), ") and num_args(",
@@ -281,49 +264,6 @@ string GenNameToIndexCode(const T& entries, bool generate) {
   return code;
 }
 
-// Converts the given `str` into a comma-separated list of per-character values.
-string StringToCharList(const string& str) {
-  string list;
-  for (const char c : str) {
-    if (!list.empty()) {
-      list += ",";
-    }
-    list += strings::StrCat(static_cast<int>(c));
-  }
-  return list;
-}
-
-string GenProgramShapeCode(xla::ProgramShape program_shape, bool generate) {
-  // No need for any static magic if we're not supposed to generate the data.
-  if (!generate) {
-    return "{\n    return nullptr;\n  }";
-  }
-  // The parameter names are currently meaningless, and redundant with the rest
-  // of our metadata, so clear them out to avoid confusion and save space.
-  program_shape.clear_parameter_names();
-  const string proto_str = program_shape.SerializeAsString();
-  // Embed the program shape as a serialized protobuf in the header file.
-  //
-  // TODO(toddw): This strategy will likely fail for larger protobufs, depending
-  // on the C++ compiler that is used. Figure out another solution if necessary.
-  string code = R"({
-    static const xla::ProgramShape* kShape = []() {
-      static const char kProto[] = {{{PROTO_LIST}}};
-      static constexpr int kProtoSize = {{PROTO_SIZE}};
-      xla::ProgramShape* shape = new xla::ProgramShape;
-      shape->ParseFromArray(kProto, kProtoSize);
-      return shape;
-    }();
-    return kShape;
-  })";
-  str_util::ReplaceAllPairs(
-      &code, {
-                 {"{{PROTO_LIST}}", StringToCharList(proto_str)},
-                 {"{{PROTO_SIZE}}", strings::StrCat(proto_str.size())},
-             });
-  return code;
-}
-
 Status ValidateFeedFetchCppNames(const tf2xla::Config& config) {
   for (const tf2xla::Feed& feed : config.feed()) {
     if (!feed.name().empty()) {
@@ -340,13 +280,14 @@ Status ValidateFeedFetchCppNames(const tf2xla::Config& config) {
 
 }  // namespace
 
-Status GenerateHeader(const HeaderOpts& opts, const tf2xla::Config& config,
-                      const CompileResult& compile_result, string* header) {
+Status GenerateHeader(const CodegenOpts& opts, const tf2xla::Config& config,
+                      const CompileResult& compile_result,
+                      const MetadataResult& metadata_result, string* header) {
   TF_RETURN_IF_ERROR(ValidateConfig(config));
   TF_RETURN_IF_ERROR(ValidateFeedFetchCppNames(config));
   const int64 result_index = compile_result.aot->result_buffer_index();
   const xla::BufferSizes& temp_sizes = compile_result.aot->buffer_sizes();
-  if (result_index < 0 || result_index > temp_sizes.size()) {
+  if (result_index < 0 || result_index >= temp_sizes.size()) {
     return errors::InvalidArgument("result index: ", result_index,
                                    " is outside the range of temp sizes: [0,",
                                    temp_sizes.size(), ")");
@@ -391,8 +332,20 @@ Status GenerateHeader(const HeaderOpts& opts, const tf2xla::Config& config,
           ?
           R"(#include "tensorflow/compiler/xla/xla_data.pb.h")"
           : "";
-  const string program_shape_code =
-      GenProgramShapeCode(ps, opts.gen_program_shape);
+
+  const string include_hlo_profile_printer_data_proto =
+      opts.gen_hlo_profile_printer_data
+          ? R"(#include "tensorflow/compiler/xla/service/hlo_profile_printer_data.pb.h")"
+          : "";
+
+  // When HLO profiling is disabled we only forward declare the
+  // HloProfilePrinter protobuf.  So we can only conditionally emit this code
+  // calling HloProfilePrinter::profile_counters_size.
+  const string assign_profile_counters_size =
+      opts.gen_hlo_profile_printer_data
+          ? "data->profile_counters_size = "
+            "data->hlo_profile_printer_data->profile_counters_size();"
+          : "";
 
   // Use a poor-man's text templating mechanism; first populate the full header
   // with placeholder tokens, and then rewrite the tokens with real values.
@@ -409,6 +362,7 @@ Status GenerateHeader(const HeaderOpts& opts, const tf2xla::Config& config,
 #define TFCOMPILE_GENERATED_{{ENTRY}}_H_  // NOLINT(build/header_guard)
 
 {{INCLUDE_XLA_DATA_PROTO}}
+{{INCLUDE_HLO_PROFILE_PRINTER_DATA_PROTO}}
 #include "tensorflow/compiler/tf2xla/xla_compiled_cpu_function.h"
 #include "tensorflow/core/platform/types.h"
 
@@ -419,6 +373,8 @@ namespace xla { class ExecutableRunOptions; }
 extern "C" void {{ENTRY}}(
     void* result, const xla::ExecutableRunOptions* run_options,
     const void** args, void** temps, tensorflow::int64* profile_counters);
+
+{{DECLS_FROM_OBJ_FILE}}
 
 {{NS_START}}
 // {{CLASS}} represents a computation previously specified in a
@@ -474,10 +430,11 @@ class {{CLASS}} : public tensorflow::XlaCompiledCpuFunction {
       data->temp_sizes = TempSizes();
       data->num_temps = kNumTemps;
       data->result_index = kResultIndex;
-      data->requires_runtime_context = {{HAS_CONTEXT_ARG}};
       data->arg_names = StaticArgNames();
       data->result_names = StaticResultNames();
       data->program_shape = StaticProgramShape();
+      data->hlo_profile_printer_data = StaticHloProfilePrinterData();
+      {{ASSIGN_PROFILE_COUNTERS_SIZE}}
       return data;
     }();
     return *kStaticData;
@@ -543,7 +500,17 @@ class {{CLASS}} : public tensorflow::XlaCompiledCpuFunction {
   static const char** StaticResultNames() {{RESULT_NAMES_CODE}}
 
   // Shape of the args and results.
-  static const xla::ProgramShape* StaticProgramShape() {{PROGRAM_SHAPE_CODE}}
+  static const xla::ProgramShape* StaticProgramShape() {
+    static const xla::ProgramShape* kShape = {{PROGRAM_SHAPE_SHIM_EXPRESSION}};
+    return kShape;
+  }
+
+  // Metadata that can be used to pretty-print profile counters.
+  static const xla::HloProfilePrinterData* StaticHloProfilePrinterData() {
+    static const xla::HloProfilePrinterData* kHloProfilePrinterData =
+      {{HLO_PROFILE_PRINTER_DATA_SHIM_EXPRESSION}};
+    return kHloProfilePrinterData;
+  }
 };
 {{NS_END}}
 
@@ -558,25 +525,86 @@ class {{CLASS}} : public tensorflow::XlaCompiledCpuFunction {
       {"{{ARG_NAMES_CODE}}", arg_names_code},
       {"{{ARG_NUM}}", strings::StrCat(arg_sizes.size())},
       {"{{ARG_SIZES}}", str_util::Join(arg_sizes, ", ")},
+      {"{{ASSIGN_PROFILE_COUNTERS_SIZE}}", assign_profile_counters_size},
       {"{{CLASS}}", opts.class_name},
+      {"{{DECLS_FROM_OBJ_FILE}}",
+       str_util::Join(metadata_result.header_variable_decls, "\n")},
       {"{{ENTRY}}", compile_result.entry_point},
-      {"{{HAS_CONTEXT_ARG}}",
-       compile_result.has_context_arg ? "true" : "false"},
+      {"{{HLO_PROFILE_PRINTER_DATA_SHIM_EXPRESSION}}",
+       metadata_result.hlo_profile_printer_data_access_shim},
       {"{{INCLUDE_XLA_DATA_PROTO}}", include_xla_data_proto},
+      {"{{INCLUDE_HLO_PROFILE_PRINTER_DATA_PROTO}}",
+       include_hlo_profile_printer_data_proto},
       {"{{METHODS_ARG}}\n", methods_arg},
       {"{{METHODS_RESULT}}\n", methods_result},
       {"{{NS_END}}\n", ns_end},
       {"{{NS_START}}\n", ns_start},
       {"{{PROGRAM_SHAPE}}", xla::ShapeUtil::HumanString(ps)},
-      {"{{PROGRAM_SHAPE_CODE}}", program_shape_code},
+      {"{{PROGRAM_SHAPE_SHIM_EXPRESSION}}",
+       metadata_result.program_shape_access_shim},
       {"{{RESULT_INDEX}}", strings::StrCat(result_index)},
       {"{{RESULT_NAMES_CODE}}", result_names_code},
       {"{{TEMP_BYTES_ALIGNED}}", strings::StrCat(temp_bytes_aligned)},
       {"{{TEMP_BYTES_TOTAL}}", strings::StrCat(temp_bytes_total)},
       {"{{TEMP_NUM}}", strings::StrCat(temp_sizes.size())},
-      {"{{TEMP_SIZES}}", str_util::Join(temp_sizes, ", ")},
-  };
+      {"{{TEMP_SIZES}}", str_util::Join(temp_sizes, ", ")}};
   str_util::ReplaceAllPairs(header, rewrites);
+  return Status::OK();
+}
+
+static string CreateUniqueIdentifier(const CodegenOpts& opts,
+                                     StringPiece suffix) {
+  string result = "__tfcompile";
+  for (const string& n : opts.namespaces) {
+    strings::StrAppend(&result, "_", n);
+  }
+
+  strings::StrAppend(&result, "_", opts.class_name, "_", suffix);
+  return result;
+}
+
+Status GenerateMetadata(const CodegenOpts& opts,
+                        const CompileResult& compile_result,
+                        MetadataResult* metadata_result) {
+  std::unique_ptr<xla::ProgramShape> program_shape;
+
+  if (opts.gen_program_shape) {
+    program_shape =
+        tensorflow::MakeUnique<xla::ProgramShape>(compile_result.program_shape);
+    // The parameter names are currently meaningless, and redundant with the
+    // rest of our metadata, so clear them out to avoid confusion and save
+    // space.
+    program_shape->clear_parameter_names();
+  }
+
+  // When asked to serialize a null protobuf, CreateEmbeddedProtocolBuffer gives
+  // a shim that evaluates to nullptr, which is what we want.
+
+  ProtobufToEmbed program_shape_protobuf{
+      CreateUniqueIdentifier(opts, "ProgramShape"), "xla::ProgramShape",
+      program_shape.get()};
+
+  ProtobufToEmbed hlo_profile_printer_data_protobuf{
+      CreateUniqueIdentifier(opts, "HloProfilePrinterData"),
+      "xla::HloProfilePrinterData",
+      compile_result.aot->hlo_profile_printer_data()};
+
+  TF_ASSIGN_OR_RETURN(
+      EmbeddedProtocolBuffers embedded_protobufs,
+      CreateEmbeddedProtocolBuffers(
+          opts.target_triple,
+          {program_shape_protobuf, hlo_profile_printer_data_protobuf}));
+
+  metadata_result->program_shape_access_shim =
+      std::move(embedded_protobufs.cpp_shims[0].expression);
+  metadata_result->hlo_profile_printer_data_access_shim =
+      std::move(embedded_protobufs.cpp_shims[1].expression);
+  metadata_result->header_variable_decls.emplace_back(
+      std::move(embedded_protobufs.cpp_shims[0].variable_decl));
+  metadata_result->header_variable_decls.emplace_back(
+      std::move(embedded_protobufs.cpp_shims[1].variable_decl));
+  metadata_result->object_file_data =
+      std::move(embedded_protobufs.object_file_data);
   return Status::OK();
 }
 

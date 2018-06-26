@@ -73,7 +73,7 @@ def cnn_model(features, labels, mode):
         kernel_size=FILTER_SHAPE2,
         padding='VALID')
     # Max across each filter to get useful features for classification.
-    pool2 = tf.squeeze(tf.reduce_max(conv2, 1), squeeze_dims=[1])
+    pool2 = tf.squeeze(tf.reduce_max(conv2, 1), axis=[1])
 
   # Apply regular WX + B and classification.
   logits = tf.layers.dense(pool2, MAX_LABEL, activation=None)
@@ -87,9 +87,7 @@ def cnn_model(features, labels, mode):
             'prob': tf.nn.softmax(logits)
         })
 
-  onehot_labels = tf.one_hot(labels, MAX_LABEL, 1, 0)
-  loss = tf.losses.softmax_cross_entropy(
-      onehot_labels=onehot_labels, logits=logits)
+  loss = tf.losses.sparse_softmax_cross_entropy(labels=labels, logits=logits)
   if mode == tf.estimator.ModeKeys.TRAIN:
     optimizer = tf.train.AdamOptimizer(learning_rate=0.01)
     train_op = optimizer.minimize(loss, global_step=tf.train.get_global_step())

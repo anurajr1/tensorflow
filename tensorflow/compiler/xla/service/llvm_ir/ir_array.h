@@ -53,18 +53,38 @@ class IrArray {
   // multidimensional index, which LLVM DCE can delete.
   class Index {
    public:
-    // Constructs an empty zero-dimensional index.
-    Index() {}
-
     // Constructs an index of rank "size". Each dimension of the index is
     // initialized to "value".
-    explicit Index(size_t size, llvm::Value* value = nullptr)
-        : multidim_(size, value) {}
+    explicit Index(size_t size, llvm::Value* value)
+        : multidim_(size, value), index_type_(value->getType()) {
+      CHECK_NE(index_type_, nullptr);
+    }
+
+    // Constructs an index of rank "size". Each dimension of the index is
+    // initialized to nullptr.
+    explicit Index(llvm::Type* index_ty, size_t size = 0)
+        : multidim_(size, nullptr), index_type_(index_ty) {
+      CHECK(index_ty->isIntegerTy());
+    }
 
     // Constructs an index from multi-dimensional index "multidim". The linear
     // index is set to nullptr.
-    explicit Index(tensorflow::gtl::ArraySlice<llvm::Value*> multidim)
-        : multidim_(multidim.begin(), multidim.end()) {}
+    explicit Index(tensorflow::gtl::ArraySlice<llvm::Value*> multidim,
+                   llvm::Type* index_ty = nullptr)
+        : multidim_(multidim.begin(), multidim.end()) {
+      if (size() == 0) {
+        index_type_ = index_ty;
+      } else {
+        index_type_ = (*this)[0]->getType();
+        if (index_ty != nullptr) {
+          CHECK_EQ(index_type_, index_ty);
+        }
+      }
+      CHECK_NE(index_type_, nullptr);
+      CHECK(c_all_of(multidim, [&](llvm::Value* v) {
+        return index_type_ == v->getType();
+      }));
+    }
 
     // Constructs an index from linear index "linear" and computes the
     // multi-dimensional index from "linear" and "shape". "ir_builder" is the IR
@@ -76,8 +96,7 @@ class IrArray {
           llvm::IRBuilder<>* ir_builder);
 
     // Constructs an index from the given multi-dimensional index and the shape
-    // that it indexes into. Also, computes the linear index according to
-    // "shape".
+    // that it indexes into.
     //
     // Precondition: "shape" has a layout.
     Index(tensorflow::gtl::ArraySlice<llvm::Value*> multidim,
@@ -98,6 +117,10 @@ class IrArray {
     llvm::Value*& operator[](size_t i) { return multidim()[i]; }
 
     void push_back(llvm::Value* value) { multidim().push_back(value); }
+    void InsertAt(int64 index, llvm::Value* value) {
+      CHECK_LE(index, size());
+      multidim().insert(multidim().begin() + index, value);
+    }
 
     using iterator = std::vector<llvm::Value*>::iterator;
     using const_iterator = std::vector<llvm::Value*>::const_iterator;
@@ -134,10 +157,31 @@ class IrArray {
         tensorflow::gtl::ArraySlice<int64> dimension_mapping,
         llvm::IRBuilder<>* builder) const;
 
+    // Given that "this" is the target index of a bitcast from `operand_shape`
+    // to `shape`, returns the source index.
+    Index SourceIndexOfBitcast(const Shape& shape, const Shape& operand_shape,
+                               llvm::IRBuilder<>* builder) const;
+
+    // Given that "this" is the target index of a broadcast from `operand_shape`
+    // to `shape` with the given dimension mapping, returns the source index.
+    Index SourceIndexOfBroadcast(
+        const Shape& shape, const Shape& operand_shape,
+        tensorflow::gtl::ArraySlice<int64> dimension_mapping,
+        llvm::IRBuilder<>* builder) const;
+
     // Linearizes the index into the given shape, i.e. reshapes it to rank-1 and
     // returns the index into the sole dimension 0 of the new shape.
     llvm::Value* Linearize(tensorflow::gtl::ArraySlice<int64> dimensions,
                            llvm::IRBuilder<>* builder) const;
+
+    llvm::Type* GetType() const { return index_type_; }
+
+    llvm::Constant* GetConstantWithIndexType(int64 c) const {
+      // The LLVM function makes sure that the value can be represented by the
+      // specified type, see ConstantInt::ConstantInt(IntegerType *Ty, const
+      // APInt &V).
+      return llvm::ConstantInt::get(index_type_, c);
+    }
 
    private:
     // Changing the multi-dimensional index invalidates the linear index.
@@ -145,6 +189,9 @@ class IrArray {
       linear_ = nullptr;
       return multidim_;
     }
+
+    void Delinearize(std::vector<llvm::Value*>* multidim, llvm::Value* linear,
+                     const Shape& shape, llvm::IRBuilder<>* ir_builder) const;
 
     std::vector<llvm::Value*> multidim_;
 
@@ -162,6 +209,8 @@ class IrArray {
     llvm::Value* linear_ = nullptr;
     Layout layout_;
     std::vector<int64> dims_;
+
+    llvm::Type* index_type_;
   };
 
   // Default constructor. Constructs an IrArray in a null status.

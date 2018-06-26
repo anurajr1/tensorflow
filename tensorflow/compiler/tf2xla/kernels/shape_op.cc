@@ -15,6 +15,7 @@ limitations under the License.
 
 // XLA-specific Shape Ops.
 
+#include "tensorflow/compiler/tf2xla/kernels/shape_util.h"
 #include "tensorflow/compiler/tf2xla/type_util.h"
 #include "tensorflow/compiler/tf2xla/xla_helpers.h"
 #include "tensorflow/compiler/tf2xla/xla_op_kernel.h"
@@ -24,34 +25,6 @@ limitations under the License.
 
 namespace tensorflow {
 namespace {
-
-// Converts a TensorShape to a constant Tensor.
-//
-// The input TensorShape input_shape is used to populate the elements of
-// shape_constant, which is modified in place.
-Status TensorShapeToConstant(const TensorShape& input_shape,
-                             Tensor* shape_constant) {
-  const int dims = input_shape.dims();
-  if (shape_constant->dtype() == DT_INT32) {
-    auto vec = shape_constant->vec<int32>();
-    for (int i = 0; i < dims; ++i) {
-      int64 dim_size = input_shape.dim_size(i);
-      if (!FastBoundsCheck(dim_size, std::numeric_limits<int32>::max())) {
-        return errors::InvalidArgument(
-            "Shape with out_type=int32 does not support tensors > int32max",
-            " but dim ", i, " is ", dim_size);
-      }
-      vec(i) = static_cast<int32>(dim_size);
-    }
-  } else {
-    auto vec = shape_constant->vec<int64>();
-    for (int i = 0; i < dims; ++i) {
-      int64 dim_size = input_shape.dim_size(i);
-      vec(i) = dim_size;
-    }
-  }
-  return Status::OK();
-}
 
 class ShapeOp : public XlaOpKernel {
  public:
@@ -70,7 +43,7 @@ class ShapeOp : public XlaOpKernel {
   DataType out_dtype_;
 };
 
-REGISTER_XLA_OP(Name("Shape"), ShapeOp);
+REGISTER_XLA_OP(Name("Shape").CompilationOnly(), ShapeOp);
 
 class ShapeNOp : public XlaOpKernel {
  public:
@@ -92,7 +65,7 @@ class ShapeNOp : public XlaOpKernel {
  private:
   DataType out_dtype_;
 };
-REGISTER_XLA_OP(Name("ShapeN"), ShapeNOp);
+REGISTER_XLA_OP(Name("ShapeN").CompilationOnly(), ShapeNOp);
 
 class RankOp : public XlaOpKernel {
  public:
@@ -108,7 +81,7 @@ class RankOp : public XlaOpKernel {
   }
 };
 
-REGISTER_XLA_OP(Name("Rank"), RankOp);
+REGISTER_XLA_OP(Name("Rank").CompilationOnly(), RankOp);
 
 class SizeOp : public XlaOpKernel {
  public:
@@ -127,7 +100,7 @@ class SizeOp : public XlaOpKernel {
   }
 };
 
-REGISTER_XLA_OP(Name("Size"), SizeOp);
+REGISTER_XLA_OP(Name("Size").CompilationOnly(), SizeOp);
 
 class ExpandDimsOp : public XlaOpKernel {
  public:
@@ -148,7 +121,7 @@ class ExpandDimsOp : public XlaOpKernel {
     xla::Literal literal;
     OP_REQUIRES_OK(ctx, ctx->ConstantInputReshaped(1, {1}, &literal));
 
-    int dim = literal.s32s(0);
+    int dim = literal.data<int32>()[0];
 
     OP_REQUIRES(ctx,
                 (dim >= -1 - input_shape.dims() && dim <= input_shape.dims()),
@@ -177,7 +150,7 @@ class ExpandDimsOp : public XlaOpKernel {
     ctx->SetOutput(0, ctx->builder()->Reshape(ctx->Input(0), new_shape));
   }
 };
-REGISTER_XLA_OP(Name("ExpandDims"), ExpandDimsOp);
+REGISTER_XLA_OP(Name("ExpandDims").CompileTimeConstInput("dim"), ExpandDimsOp);
 
 class SqueezeOp : public XlaOpKernel {
  public:
@@ -216,10 +189,9 @@ class SqueezeOp : public XlaOpKernel {
       if (!wrapped_squeeze_dims.empty()) {
         if (wrapped_squeeze_dims.count(i) > 0) {
           OP_REQUIRES(ctx, existing_dim == 1,
-                      errors::InvalidArgument("Tried to explicitly squeeze "
-                                              "dimension ",
-                                              i, " but dimension was not 1: ",
-                                              existing_dim));
+                      errors::InvalidArgument(
+                          "Tried to explicitly squeeze dimension ", i,
+                          " but dimension was not 1: ", existing_dim));
         } else {
           // This dimension is not being squeezed.
           new_shape.push_back(existing_dim);

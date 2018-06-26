@@ -189,7 +189,6 @@ TEST(OpGenLibTest, ApiDefInitializedFromOpDef) {
 visibility: VISIBLE
 endpoint {
   name: "testop"
-  deprecation_version: 123
 }
 in_arg {
   name: "arg_a"
@@ -410,8 +409,8 @@ op {
 
   ApiDefMap api_map(op_list);
   TF_CHECK_OK(api_map.LoadApiDef(kTestApiDef));
-  auto status = api_map.LoadApiDef(api_def1);
-  ASSERT_EQ(tensorflow::error::FAILED_PRECONDITION, status.code());
+  TF_CHECK_OK(api_map.LoadApiDef(api_def1));
+  ASSERT_EQ(nullptr, api_map.GetApiDef("different_testop"));
 }
 
 TEST(OpGenLibTest, ApiDefInvalidArgOrder) {

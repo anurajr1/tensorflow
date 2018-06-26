@@ -92,10 +92,9 @@ TEST(SoftmaxOpTest, CompareWithTFminiBetaEq1) {
   m.Invoke();
 
   std::unique_ptr<float[]> output_buffer(new float[input_size * batch_size]);
-  static tflite::Dims<4> input_dims = {{input_size, 1, 1, batch_size},
-                                       {1, 0, 0, input_size}};
-  tflite::reference_ops::Softmax(input_buffer, input_dims, beta,
-                                 output_buffer.get(), input_dims);
+  auto input_shape = RuntimeShape({batch_size, 1, 1, input_size});
+  tflite::reference_ops::Softmax(input_buffer, input_shape, beta,
+                                 output_buffer.get(), input_shape);
 
   std::vector<float> expected;
   expected.insert(expected.end(), output_buffer.get(),
@@ -120,10 +119,9 @@ TEST(SoftmaxOpTest, CompareWithTFminiBetaNotEq1) {
   m.Invoke();
 
   std::unique_ptr<float[]> output_buffer(new float[input_size * batch_size]);
-  static tflite::Dims<4> input_dims = {{input_size, 1, 1, batch_size},
-                                       {1, 0, 0, input_size}};
-  tflite::reference_ops::Softmax(input_buffer, input_dims, beta,
-                                 output_buffer.get(), input_dims);
+  auto input_shape = RuntimeShape({batch_size, 1, 1, input_size});
+  tflite::reference_ops::Softmax(input_buffer, input_shape, beta,
+                                 output_buffer.get(), input_shape);
 
   std::vector<float> expected;
   expected.insert(expected.end(), output_buffer.get(),
@@ -136,8 +134,7 @@ TEST(SoftmaxOpTest, CompareWithTFminiBetaNotEq1) {
 }  // namespace tflite
 
 int main(int argc, char** argv) {
-  // On Linux, add: tflite::LogToStderr();
-  tflite::LogToStderr();
+  ::tflite::LogToStderr();
   ::testing::InitGoogleTest(&argc, argv);
   return RUN_ALL_TESTS();
 }

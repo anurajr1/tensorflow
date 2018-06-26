@@ -54,7 +54,11 @@ extern Status ConvertNodeDefsToGraph(const GraphConstructorOptions& opts,
 
 // Options for calling ImportGraphDef().
 struct ImportGraphDefOptions {
-  ImportGraphDefOptions() : uniquify_names(false), skip_mapped_nodes(false) {}
+  ImportGraphDefOptions()
+      : uniquify_names(false),
+        uniquify_prefix(false),
+        skip_mapped_nodes(false),
+        validate_shape(true) {}
 
   // Name prefix to use for nodes imported from the GraphDef.  For example, if
   // prefix="animals" and GraphDef contains a node "bunny" then the node will be
@@ -68,18 +72,23 @@ struct ImportGraphDefOptions {
   // will guarantee all node names are unique.
   bool uniquify_names;
 
+  // If true, `prefix` will be modified if it already exists as a node name or
+  // prefix in the graph. If false, a conflicting prefix will be treated as an
+  // error. This option has no effect if `prefix` isn't specified.
+  bool uniquify_prefix;
+
   // Maps tensors in `gdef` to existing tensors in `g`. Inputs in `gdef`
   // corresponding to `input_map` keys will be remapped to the nodes in `g`
   // corresponding to the values.
   //
-  // Keys should not include `prefix`, i.e., a key TensorId's name should be the
-  // name as it originally appears in `gdef`.
+  // Keys should not include `prefix`, i.e., a key ID's name should be the name
+  // as it originally appears in `gdef`.
   //
   // If this is non-empty, ImportGraphDef must be called with the shape refiner
   // used to create the existing nodes referenced in `input_map`.
   // TODO(skyewm): can we remove this requirement? How do we access the original
   // shape refiner?
-  std::map<TensorId, TensorId> input_map;
+  std::map<SafeTensorId, SafeTensorId> input_map;
 
   // If true, nodes that will have all output edges removed because of
   // overrides in `input_map` will not be imported.
@@ -98,12 +107,12 @@ struct ImportGraphDefOptions {
   // caller must pass a results object to `ImportGraphDef()`. The
   // `return_tensors` field will be populated with the imported nodes in `g`.
   //
-  // Entries should not include `prefix`, i.e., each TensorId's name should be
-  // the name as it originally appears in `gdef`.
+  // Entries should not include `prefix`, i.e., each ID's name should be the
+  // name as it originally appears in `gdef`.
   //
   // If this contains a tensor that's also being remapped via `input_map`, the
   // corresponding existing tensor in `g` will be returned.
-  std::vector<TensorId> return_tensors;
+  std::vector<SafeTensorId> return_tensors;
 
   // The names of nodes in `gdef` that will be returned via the
   // ImportGraphDefResults output parameter of `ImportGraphDef()`. If this list
@@ -121,6 +130,9 @@ struct ImportGraphDefOptions {
 
   // If true, checks that all colocation constraints are nodes in the GraphDef.
   bool validate_colocation_constraints = true;
+
+  // If false skips shape validation.
+  bool validate_shape;
 
   // TODO(ashankar): Enable handling of GraphDefs produced by newer binaries
   // with ops that are not defined in the binary calling ImportGraphDef.
@@ -140,9 +152,10 @@ struct ImportGraphDefResults {
   // The requested nodes associated with ImportGraphDefOptions::return_nodes.
   std::vector<Node*> return_nodes;
 
-  // Keys in ImportGraphDefOptions::input_map that weren't used as an input to
-  // any node in`gdef`.
-  std::vector<TensorId> unused_input_map_keys;
+  // Keys in ImportGraphDefOptions::input_map that don't appear in `gdef` and
+  // weren't used as an input to any node in `gdef`. These keys are likely due
+  // to typos, and callers may wish to treat their existence as an error.
+  std::vector<SafeTensorId> missing_unused_input_map_keys;
 };
 
 // Adds the graph in GraphDef `gdef` into an existing Graph `*g`.

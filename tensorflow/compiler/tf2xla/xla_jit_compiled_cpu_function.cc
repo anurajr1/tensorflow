@@ -37,27 +37,14 @@ namespace {
 
 // Returns a vector of positional argument buffer sizes.
 xla::StatusOr<std::vector<intptr_t>> ComputeArgSizes(
-    const xla::ProgramShape& program_shape, bool requires_runtime_context) {
+    const xla::ProgramShape& program_shape) {
   std::vector<intptr_t> arg_sizes;
   const size_t num_args = program_shape.parameters_size();
   arg_sizes.reserve(num_args);
   for (int i = 0; i < num_args; ++i) {
     const xla::Shape& arg_shape = program_shape.parameters(i);
-    if (i == num_args - 1 && requires_runtime_context) {
-      // If the compiled function needs an XlaLocalRuntimeContext* arg, it's
-      // always last, and must be represented as an opaque type.
-      const xla::PrimitiveType type = arg_shape.element_type();
-      if (type != xla::OPAQUE) {
-        return errors::InvalidArgument(
-            "expected final context arg to be opaque, but got type: ",
-            xla::PrimitiveType_Name(type), ", from program shape: ",
-            xla::ShapeUtil::HumanString(program_shape));
-      }
-      arg_sizes.push_back(-1);
-    } else {
-      constexpr size_t kPointerSize = sizeof(void*);
-      arg_sizes.push_back(xla::ShapeUtil::ByteSizeOf(arg_shape, kPointerSize));
-    }
+    constexpr size_t kPointerSize = sizeof(void*);
+    arg_sizes.push_back(xla::ShapeUtil::ByteSizeOf(arg_shape, kPointerSize));
   }
   return std::move(arg_sizes);
 }
@@ -125,13 +112,12 @@ void CollectNames(const T& entries, std::vector<string>* nonempty_names,
 XlaJitCompiledCpuFunction::Compile(
     const GraphDef& graph_def, const tf2xla::Config& config,
     const xla::ExecutableBuildOptions& build_options) {
-  // Convert the graph_def into an xla::Computation.
+  // Convert the graph_def into an xla::XlaComputation.
   TF_ASSIGN_OR_RETURN(xla::LocalClient * client,
                       xla::ClientLibrary::GetOrCreateLocalClient());
-  xla::Computation computation;
-  bool requires_runtime_context;
-  TF_RETURN_IF_ERROR(tensorflow::ConvertGraphDefToXla(
-      graph_def, config, client, &computation, &requires_runtime_context));
+  xla::XlaComputation computation;
+  TF_RETURN_IF_ERROR(tensorflow::ConvertGraphDefToXla(graph_def, config, client,
+                                                      &computation));
 
   // Get and verify the program shape.
   TF_ASSIGN_OR_RETURN(std::unique_ptr<xla::ProgramShape> program_shape,
@@ -167,9 +153,8 @@ XlaJitCompiledCpuFunction::Compile(
       cpu_executable->buffer_assignment();
 
   // Compute buffer sizes and the result index, needed to run the raw function.
-  TF_ASSIGN_OR_RETURN(
-      std::vector<intptr_t> arg_sizes,
-      ComputeArgSizes(*program_shape, requires_runtime_context));
+  TF_ASSIGN_OR_RETURN(std::vector<intptr_t> arg_sizes,
+                      ComputeArgSizes(*program_shape));
   TF_ASSIGN_OR_RETURN(std::vector<intptr_t> temp_sizes,
                       ComputeTempSizes(buffer_assignment));
   TF_ASSIGN_OR_RETURN(size_t result_index,
@@ -188,7 +173,6 @@ XlaJitCompiledCpuFunction::Compile(
   jit->static_data_.temp_sizes = jit->temp_sizes_.data();
   jit->static_data_.num_temps = jit->temp_sizes_.size();
   jit->static_data_.result_index = result_index;
-  jit->static_data_.requires_runtime_context = requires_runtime_context;
   // Optional metadata is collected and set below.
   CollectNames(config.feed(), &jit->nonempty_arg_names_, &jit->arg_names_);
   CollectNames(config.fetch(), &jit->nonempty_result_names_,
@@ -198,10 +182,10 @@ XlaJitCompiledCpuFunction::Compile(
   jit->static_data_.program_shape = jit->program_shape_.get();
 
   if (cpu_executable->hlo_profiling_enabled()) {
-    jit->static_data_.hlo_profile_printer =
-        &cpu_executable->hlo_profile_printer();
+    jit->static_data_.hlo_profile_printer_data =
+        &cpu_executable->hlo_profile_printer_data();
     jit->static_data_.profile_counters_size =
-        cpu_executable->hlo_profile_printer().profile_counters_size();
+        cpu_executable->hlo_profile_printer_data().profile_counters_size();
   }
 
   return std::move(jit_unique_ptr);

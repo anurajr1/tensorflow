@@ -152,6 +152,22 @@ class CrfTest(test.TestCase):
 
         self.assertAllClose(tf_log_norm, tf_brute_force_log_norm)
 
+  def testCrfLogNormZeroSeqLength(self):
+    """
+    Test `crf_log_norm` when `sequence_lengths` contains one or more zeros.
+    """
+    with self.test_session() as sess:
+      inputs = constant_op.constant(np.ones([2, 10, 5],
+                                            dtype=np.float32))
+      transition_params = constant_op.constant(np.ones([5, 5],
+                                                       dtype=np.float32))
+      sequence_lengths = constant_op.constant(np.zeros([2],
+                                                       dtype=np.int32))
+      expected_log_norm = np.zeros([2], dtype=np.float32)
+      log_norm = crf.crf_log_norm(inputs, sequence_lengths, transition_params)
+      tf_log_norm = sess.run(log_norm)
+      self.assertAllClose(tf_log_norm, expected_log_norm)
+
   def testCrfLogLikelihood(self):
     inputs = np.array(
         [[4, 5, -3], [3, -1, 3], [-1, 2, 1], [0, 0, 0]], dtype=np.float32)
@@ -178,17 +194,6 @@ class CrfTest(test.TestCase):
           all_sequence_log_likelihoods)
       tf_total_log_likelihood = sess.run(total_log_likelihood)
       self.assertAllClose(tf_total_log_likelihood, 0.0)
-
-  def testLengthsToMasks(self):
-    with self.test_session() as sess:
-      sequence_lengths = [4, 1, 8, 2]
-      max_sequence_length = max(sequence_lengths)
-      mask = crf._lengths_to_masks(sequence_lengths, max_sequence_length)
-      tf_mask = sess.run(mask)
-      self.assertEqual(len(tf_mask), len(sequence_lengths))
-      for m, l in zip(tf_mask, sequence_lengths):
-        self.assertAllEqual(m[:l], [1] * l)
-        self.assertAllEqual(m[l:], [0] * (len(m) - l))
 
   def testViterbiDecode(self):
     inputs = np.array(
@@ -292,6 +297,21 @@ class CrfTest(test.TestCase):
         self.assertEqual(list(tf_actual_max_sequence[:sequence_lengths]),
                          expected_max_sequence[:sequence_lengths])
 
+  def testCrfDecodeZeroSeqLength(self):
+    """
+    Test that crf_decode works when sequence_length contains one or more zeros.
+    """
+    with self.test_session() as sess:
+      inputs = constant_op.constant(np.ones([2, 10, 5],
+                                            dtype=np.float32))
+      transition_params = constant_op.constant(np.ones([5, 5],
+                                                       dtype=np.float32))
+      sequence_lengths = constant_op.constant(np.zeros([2],
+                                                       dtype=np.int32))
+      tags, scores = crf.crf_decode(inputs, transition_params, sequence_lengths)
+      tf_tags, tf_scores = sess.run([tags, scores])
+      self.assertEqual(len(tf_tags.shape), 2)
+      self.assertEqual(len(tf_scores.shape), 1)
 
 if __name__ == "__main__":
   test.main()

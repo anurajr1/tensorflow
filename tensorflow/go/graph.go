@@ -28,7 +28,8 @@ package tensorflow
 //                                 int num_shapes) {
 //  const int64_t** dims =
 //    (const int64_t**)malloc(sizeof(const int64_t*) * num_shapes);
-//  for (int i = 0; i < num_shapes; i++) {
+//  int i = 0;
+//  for (i = 0; i < num_shapes; i++) {
 //    dims[i] = flat_dims;
 //    if (num_dims[i] > 0) {
 //      // flat_dims will be NULL iff num_shapes is 0 or all elements in num_dims are <= 0.
@@ -132,6 +133,20 @@ func (g *Graph) Operation(name string) *Operation {
 	return &Operation{cop, g}
 }
 
+// Operations returns a list of all operations in the graph
+func (g *Graph) Operations() []Operation {
+	var pos C.size_t = 0
+	ops := []Operation{}
+	for {
+		cop := C.TF_GraphNextOperation(g.c, &pos)
+		if cop == nil {
+			break
+		}
+		ops = append(ops, Operation{cop, g})
+	}
+	return ops
+}
+
 // OpSpec is the specification of an Operation to be added to a Graph
 // (using Graph.AddOperation).
 type OpSpec struct {
@@ -158,7 +173,11 @@ type OpSpec struct {
 	// operation.
 	Attrs map[string]interface{}
 
-	// Other possible fields: Device, ColocateWith, ControlInputs.
+	// Operations that must be executed before executing the operation
+	// being added.
+	ControlDependencies []*Operation
+
+	// Other possible fields: Device, ColocateWith.
 }
 
 // AddOperation adds an operation to g.
@@ -188,6 +207,9 @@ func (g *Graph) AddOperation(args OpSpec) (*Operation, error) {
 				C.TF_AddInputList(cdesc, nil, 0)
 			}
 		}
+	}
+	for _, in := range args.ControlDependencies {
+		C.TF_AddControlInput(cdesc, in.c)
 	}
 	status := newStatus()
 	for name, value := range args.Attrs {

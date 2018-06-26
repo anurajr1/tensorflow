@@ -19,7 +19,6 @@ limitations under the License.
 #include <cassert>
 #include <string>
 
-#include "tensorflow/compiler/tf2xla/xla_local_runtime_context.h"
 #include "tensorflow/compiler/xla/executable_run_options.h"
 #include "tensorflow/core/platform/types.h"
 
@@ -27,7 +26,7 @@ limitations under the License.
 // never use this functionality.
 namespace xla {
 class ProgramShape;
-class HloProfilePrinter;
+class HloProfilePrinterData;
 }
 
 namespace tensorflow {
@@ -70,9 +69,6 @@ class XlaCompiledCpuFunction {
     // The 0-based index of the result tuple, in the temp buffers.
     size_t result_index = 0;
 
-    // Is the final arg XlaLocalRuntimeContext?
-    bool requires_runtime_context = false;
-
     // [Optional] Arrays of arg and result names. These are arrays of C-style
     // strings, where the array is terminated by nullptr.
     const char** arg_names = nullptr;
@@ -81,12 +77,14 @@ class XlaCompiledCpuFunction {
     // [Optional] Arg and result shapes.
     const xla::ProgramShape* program_shape = nullptr;
 
-    // [Optional] Profile printer.  Null if profiling is disabled.
-    const xla::HloProfilePrinter* hlo_profile_printer = nullptr;
+    // [Optional] Profile printer data.  Null if profiling is disabled.
+    const xla::HloProfilePrinterData* hlo_profile_printer_data = nullptr;
 
     // [Optional] The number of profile counters expected in the profile counter
     // buffer by the generated code and hlo_profile_printer.  0 if profiling is
-    // disabled.
+    // disabled.  This information is already present in
+    // hlo_profile_printer_data but xla::HloProfilePrinterData is forward
+    // declared so we don't have access to that information here.
     int64 profile_counters_size = 0;
   };
 
@@ -111,21 +109,22 @@ class XlaCompiledCpuFunction {
   // Sets the intra-op thread pool used to run individual ops concurrently.
   void set_thread_pool(const Eigen::ThreadPoolDevice* pool) {
     run_options_.set_intra_op_thread_pool(pool);
-    context_.thread_pool = pool;
   }
 
   // Runs the computation, with inputs read from arg buffers, and outputs
   // written to result buffers. Returns true on success and false on failure.
   bool Run() {
-    context_.error = false;
-    context_.error_msg.clear();
     raw_function_(temps_[result_index_], &run_options_,
                   const_cast<const void**>(args_), temps_, profile_counters_);
-    return !context_.error;
+    return true;
   }
 
   // Returns the error message from the previous failed Run call.
-  const string& error_msg() const { return context_.error_msg; }
+  //
+  // TODO(fschneider): For now this always returns an empty string because there
+  // is no support for error reporting in XLA. Remove this once all callers are
+  // updated.
+  string error_msg() const { return {}; }
 
   // ------------------------------
   // Arg methods for managing input buffers. Buffers are in row-major order.
@@ -147,10 +146,6 @@ class XlaCompiledCpuFunction {
   // Allocated memory must be aligned to the size specified by
   // tensorflow::tfcompile::runtime::kAlign. If possible, use the functions in
   // tensorflow/compiler/aot/runtime.h to ensure correct alignment.
-  //
-  // If StaticData.requires_runtime_context==true, the final argument is an
-  // XlaLocalRuntimeContext, which is managed internally by this class, and
-  // should not be changed.
   //
   // Aliasing of argument and result buffers is not allowed, and results in
   // undefined behavior.
@@ -212,10 +207,12 @@ class XlaCompiledCpuFunction {
   // program shape isn't available.
   const xla::ProgramShape* ProgramShape() const { return program_shape_; }
 
-  bool hlo_profiling_enabled() const { return hlo_profile_printer_ != nullptr; }
-  const xla::HloProfilePrinter& hlo_profile_printer() const {
+  bool hlo_profiling_enabled() const {
+    return hlo_profile_printer_data_ != nullptr;
+  }
+  const xla::HloProfilePrinterData& hlo_profile_printer_data() const {
     assert(hlo_profiling_enabled());
-    return *hlo_profile_printer_;
+    return *hlo_profile_printer_data_;
   }
 
  private:
@@ -236,13 +233,12 @@ class XlaCompiledCpuFunction {
 
   // Options and context passed to the compiled function.
   xla::ExecutableRunOptions run_options_;
-  tensorflow::XlaLocalRuntimeContext context_;
 
   // Optional metadata.
   const char** arg_names_ = nullptr;
   const char** result_names_ = nullptr;
   const xla::ProgramShape* program_shape_ = nullptr;
-  const xla::HloProfilePrinter* hlo_profile_printer_ = nullptr;
+  const xla::HloProfilePrinterData* hlo_profile_printer_data_ = nullptr;
 };
 
 }  // namespace tensorflow

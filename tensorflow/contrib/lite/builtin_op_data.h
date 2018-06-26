@@ -12,10 +12,12 @@ WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
-#ifndef THIRD_PARTY_TENSORFLOW_CONTRIB_LITE_BUILTIN_OP_DATA_H_
-#define THIRD_PARTY_TENSORFLOW_CONTRIB_LITE_BUILTIN_OP_DATA_H_
+#ifndef TENSORFLOW_CONTRIB_LITE_BUILTIN_OP_DATA_H_
+#define TENSORFLOW_CONTRIB_LITE_BUILTIN_OP_DATA_H_
 
 #include <stdint.h>
+
+#include "tensorflow/contrib/lite/context.h"
 
 #ifdef __cplusplus
 extern "C" {
@@ -51,6 +53,8 @@ typedef struct {
   TfLitePadding padding;
   int stride_width;
   int stride_height;
+  int dilation_width_factor;
+  int dilation_height_factor;
   TfLiteFusedActivation activation;
 } TfLiteConvParams;
 
@@ -83,7 +87,14 @@ typedef struct {
   TfLiteFusedActivation activation;
 } TfLiteRNNParams;
 
-typedef struct { TfLiteFusedActivation activation; } TfLiteFullyConnectedParams;
+typedef struct {
+  bool time_major;
+  TfLiteFusedActivation activation;
+} TfLiteSequenceRNNParams;
+
+typedef struct {
+  TfLiteFusedActivation activation;
+} TfLiteFullyConnectedParams;
 
 typedef enum {
   kTfLiteLshProjectionUnknown = 0,
@@ -91,9 +102,13 @@ typedef enum {
   kTfLiteLshProjectionDense = 2,
 } TfLiteLSHProjectionType;
 
-typedef struct { TfLiteLSHProjectionType type; } TfLiteLSHProjectionParams;
+typedef struct {
+  TfLiteLSHProjectionType type;
+} TfLiteLSHProjectionParams;
 
-typedef struct { float beta; } TfLiteSoftmaxParams;
+typedef struct {
+  float beta;
+} TfLiteSoftmaxParams;
 
 typedef struct {
   int axis;
@@ -105,8 +120,22 @@ typedef struct {
 } TfLiteAddParams;
 
 typedef struct {
+} TfLiteSpaceToBatchNDParams;
+
+typedef struct {
+} TfLiteBatchToSpaceNDParams;
+
+typedef struct {
   TfLiteFusedActivation activation;
 } TfLiteMulParams;
+
+typedef struct {
+  TfLiteFusedActivation activation;
+} TfLiteSubParams;
+
+typedef struct {
+  TfLiteFusedActivation activation;
+} TfLiteDivParams;
 
 typedef struct {
   TfLiteFusedActivation activation;
@@ -119,16 +148,31 @@ typedef struct {
   float beta;
 } TfLiteLocalResponseNormParams;
 
+typedef enum {
+  kTfLiteLSTMFullKernel = 0,
+  kTfLiteLSTMBasicKernel
+} TfLiteLSTMKernelType;
+
 typedef struct {
+  // Parameters for LSTM version 1.
   TfLiteFusedActivation activation;
   float cell_clip;
   float proj_clip;
+
+  // Parameters for LSTM version 2.
+  // kTfLiteLSTMBasicKernel is only supported in version 2 or above.
+  TfLiteLSTMKernelType kernel_type;
 } TfLiteLSTMParams;
 
 typedef struct {
-  int new_height;
-  int new_width;
+  bool align_corners;
 } TfLiteResizeBilinearParams;
+
+typedef struct {
+} TfLitePadParams;
+
+typedef struct {
+} TfLitePadV2Params;
 
 typedef struct {
   // TODO(ahentz): We can't have dynamic data in this struct, at least not yet.
@@ -147,6 +191,11 @@ typedef struct {
   int block_size;
 } TfLiteSpaceToDepthParams;
 
+typedef struct {
+  TfLiteType in_data_type;
+  TfLiteType out_data_type;
+} TfLiteCastParams;
+
 typedef enum {
   kTfLiteCombinerTypeSum = 0,
   kTfLiteCombinerTypeMean = 1,
@@ -157,8 +206,56 @@ typedef struct {
   TfLiteCombinerType combiner;
 } TfLiteEmbeddingLookupSparseParams;
 
+typedef struct {
+  int axis;
+} TfLiteGatherParams;
+
+typedef struct {
+} TfLiteTransposeParams;
+
+typedef struct {
+  bool keep_dims;
+} TfLiteReducerParams;
+
+typedef struct {
+  int num_splits;
+} TfLiteSplitParams;
+
+typedef struct {
+  // TODO(ahentz): We can't have dynamic data in this struct, at least not yet.
+  // For now we will fix the maximum possible number of dimensions.
+  int squeeze_dims[8];
+  int num_squeeze_dims;
+} TfLiteSqueezeParams;
+
+typedef struct {
+  int begin_mask;
+  int end_mask;
+  int ellipsis_mask;
+  int new_axis_mask;
+  int shrink_axis_mask;
+} TfLiteStridedSliceParams;
+
+typedef struct {
+  TfLiteType output_type;
+} TfLiteArgMaxParams;
+
+typedef struct {
+  TfLitePadding padding;
+  int stride_width;
+  int stride_height;
+} TfLiteTransposeConvParams;
+
+typedef struct {
+  bool validate_indices;
+} TfLiteSparseToDenseParams;
+
+typedef struct {
+  TfLiteType out_type;
+} TfLiteShapeParams;
+
 #ifdef __cplusplus
 }  // extern "C"
 #endif  // __cplusplus
 
-#endif  // THIRD_PARTY_TENSORFLOW_CONTRIB_LITE_BUILTIN_OP_DATA_H_
+#endif  // TENSORFLOW_CONTRIB_LITE_BUILTIN_OP_DATA_H_

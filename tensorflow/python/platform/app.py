@@ -22,7 +22,7 @@ import errno as _errno
 import sys as _sys
 
 from tensorflow.python.platform import flags
-from tensorflow.python.util.all_util import remove_undocumented
+from tensorflow.python.util.tf_export import tf_export
 
 
 def _usage(shorthelp):
@@ -108,19 +108,15 @@ def _define_help_flags():
     _define_help_flags_called = True
 
 
+@tf_export('app.run')
 def run(main=None, argv=None):
   """Runs the program with an optional 'main' function and 'argv' list."""
 
   # Define help flags.
   _define_help_flags()
 
-  # Parse flags.
-  try:
-    argv = flags.FLAGS(_sys.argv if argv is None else argv)
-  except flags.Error as error:
-    _sys.stderr.write('FATAL Flags parsing error: %s\n' % error)
-    _sys.stderr.write('Pass --helpshort or --helpfull to see help on flags.\n')
-    _sys.exit(1)
+  # Parse known flags.
+  argv = flags.FLAGS(_sys.argv if argv is None else argv, known_only=True)
 
   main = main or _sys.modules['__main__'].main
 
@@ -128,11 +124,3 @@ def run(main=None, argv=None):
   # to the final program.
   _sys.exit(main(argv))
 
-
-_allowed_symbols = [
-    'run',
-    # Allowed submodule.
-    'flags',
-]
-
-remove_undocumented(__name__, _allowed_symbols)

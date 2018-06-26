@@ -28,13 +28,12 @@ namespace xla {
 // A base class for HLO tests that stores a default HloModule, and automatically
 // performs verification on that module on tear-down.
 class HloVerifiedTestBase : public HloTestBase {
- public:
-  // Returns the size in bytes of the given shape, using a default pointer size.
-  static int64 DefaultShapeSize(const Shape& shape);
-
  protected:
   HloVerifiedTestBase();
   ~HloVerifiedTestBase() override;
+
+  // Constructs a default shape verifier.
+  std::unique_ptr<ShapeVerifier> MakeShapeVerifier();
 
   // Performs verification on the default HloModule returned by module().
   // Automatically called by the testing framework for each test.
@@ -45,17 +44,32 @@ class HloVerifiedTestBase : public HloTestBase {
   // Returns the default HloModule, lazily creating it if necessary via
   // HloTestBase::CreateNewModule().
   HloModule& module();
+  void ParseAndVerifyModule(tensorflow::StringPiece hlo_text,
+                            const HloModuleConfig& config = HloModuleConfig());
 
   // Sets the shape-size function used during hlo verification. If this isn't
-  // called, DefaultShapeSize is used instead.
-  void SetShapeSizeFn(std::function<int64(const Shape&)> shape_size_fn) {
-    shape_size_fn_ = std::move(shape_size_fn);
+  // called, a default ShapeVerifier is used instead.
+  void SetShapeVerifier(std::unique_ptr<ShapeVerifier> shape_verifier) {
+    shape_verifier_ = std::move(shape_verifier);
   }
 
+  // Creates a new module for a test, and stores it in modules_ so it can be
+  // verified. Intentionally hides HloTestBase::CreateNewModule, to prevent
+  // creation of unverified modules.
+  HloModule* CreateNewModule(const string& name = TestName());
+
+  // It is confusing to store modules created by module() and CreateNewModule()
+  // in different fields, but it allows us to migrate tests to
+  // HloVerifiedTestBase more easily, so it's a win because we can verify more
+  // modules. See b/80488902.
  private:
-  std::unique_ptr<HloModule> module_;  // Lazily populated. Access via module().
-  std::function<int64(const Shape&)> shape_size_fn_;
+  // Lazily populated. Access via module().
+  std::unique_ptr<HloModule> module_;
+  // Populated by calls to CreateNewModule.
+  std::vector<std::unique_ptr<HloModule>> modules_;
+  std::unique_ptr<ShapeVerifier> shape_verifier_;
   bool tear_down_called_ = false;
+  static void VerifyModule(HloModule* module);
 };
 
 }  // namespace xla

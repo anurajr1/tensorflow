@@ -34,7 +34,7 @@ limitations under the License.
 #include "llvm/Analysis/TargetTransformInfo.h"
 #include "llvm/Bitcode/BitcodeReader.h"
 #include "llvm/Bitcode/BitcodeWriter.h"
-#include "llvm/CodeGen/CommandFlags.def"
+#include "llvm/CodeGen/CommandFlags.inc"
 #include "llvm/IR/LLVMContext.h"
 #include "llvm/IR/LegacyPassManager.h"
 #include "llvm/IR/Module.h"
@@ -77,8 +77,7 @@ static string GetLibdeviceFilename(const string& libdevice_dir_path,
   // Since CUDA 9.0, all GPU versions are included in a single file
   const char* unified_libdevice_filename = "libdevice.10.bc";
   std::vector<string> unified_libdevice_files;
-  const tensorflow::Status status =
-    tensorflow::Env::Default()->GetMatchingPaths(
+  const Status status = tensorflow::Env::Default()->GetMatchingPaths(
       tensorflow::io::JoinPath(libdevice_dir_path, unified_libdevice_filename),
       &unified_libdevice_files);
   if (status.ok() && unified_libdevice_files.size() == 1) {
@@ -252,7 +251,7 @@ void EmitBitcodeToFile(const Module& module, tensorflow::StringPiece filename) {
     LOG(FATAL) << "opening bitcode file for writing: " << error_code.message();
   }
 
-  llvm::WriteBitcodeToFile(&module, outfile.os());
+  llvm::WriteBitcodeToFile(module, outfile.os());
   outfile.keep();
 }
 
@@ -273,7 +272,7 @@ string EmitModuleToPTX(Module* module, llvm::TargetMachine* target_machine) {
     codegen_passes.add(new llvm::TargetLibraryInfoWrapperPass(
         llvm::Triple(module->getTargetTriple())));
 
-    target_machine->addPassesToEmitFile(codegen_passes, pstream,
+    target_machine->addPassesToEmitFile(codegen_passes, pstream, nullptr,
                                         llvm::TargetMachine::CGFT_AssemblyFile);
     codegen_passes.run(*module);
   }
@@ -311,11 +310,11 @@ bool CouldNeedLibdevice(const llvm::Module& module) {
 }
 
 // Links libdevice into the given module if the module needs libdevice.
-tensorflow::Status LinkLibdeviceIfNecessary(
-    llvm::Module* module, std::pair<int, int> compute_capability,
-    const string& libdevice_dir_path) {
+Status LinkLibdeviceIfNecessary(llvm::Module* module,
+                                std::pair<int, int> compute_capability,
+                                const string& libdevice_dir_path) {
   if (!CouldNeedLibdevice(*module)) {
-    return tensorflow::Status::OK();
+    return Status::OK();
   }
 
   llvm::Linker linker(*module);
@@ -336,7 +335,7 @@ tensorflow::Status LinkLibdeviceIfNecessary(
     return tensorflow::errors::Internal(tensorflow::strings::StrCat(
         "Error linking libdevice from ", libdevice_path));
   }
-  return tensorflow::Status::OK();
+  return Status::OK();
 }
 
 StatusOr<string> CompileModuleToPtx(llvm::Module* module,
@@ -440,7 +439,7 @@ StatusOr<string> CompileModuleToPtx(llvm::Module* module,
 
 // One-time module initializer.
 // Must be called only once -- DO NOT CALL DIRECTLY.
-void GPUBackendInit() {
+void GPUBackendInit(const HloModuleConfig& hlo_module_config) {
   // Feed all customized flags here, so we can override them with llvm_cl_opts
   // without redeploy the compiler for development purpose.
 
@@ -466,6 +465,8 @@ void GPUBackendInit() {
   // between those loads.
   FeedLLVMWithFlags({"-memdep-block-scan-limit=500"});
 
+  llvm_ir::InitializeLLVMCommandLineOptions(hlo_module_config);
+
   // Initialize the NVPTX target; it's the only target we link with, so call its
   // specific initialization functions instead of the catch-all InitializeAll*.
   LLVMInitializeNVPTXTarget();
@@ -485,11 +486,11 @@ StatusOr<string> CompileToPtx(llvm::Module* module,
                               const HloModuleConfig& hlo_module_config,
                               const string& libdevice_dir_path) {
   static std::once_flag backend_init_flag;
-  std::call_once(backend_init_flag, GPUBackendInit);
+  std::call_once(backend_init_flag, GPUBackendInit, hlo_module_config);
 
   string ptx;
   {
-    tensorflow::port::Tracing::TraceMe annotation(
+    tensorflow::tracing::ScopedActivity activity(
         "Compiling IR", llvm_ir::AsString(module->getName()),
         /*is_expensive=*/true);
     XLA_SCOPED_LOGGING_TIMER("Compile module " +

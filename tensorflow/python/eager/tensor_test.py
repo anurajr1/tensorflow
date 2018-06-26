@@ -19,6 +19,7 @@ from __future__ import division
 from __future__ import print_function
 
 import copy
+import re
 
 import numpy as np
 
@@ -106,6 +107,24 @@ class TFETensorTest(test_util.TensorFlowTestCase):
     t = _create_tensor(n)
     self.assertAllEqual([[1, 2], [3, 4]], t)
 
+  def testNumpyArrayDtype(self):
+    tensor = constant_op.constant([1.0, 2.0, 3.0])
+    numpy_tensor = np.asarray(tensor, dtype=np.int32)
+    self.assertAllEqual(numpy_tensor, [1, 2, 3])
+
+  def testNdimsAgreesWithNumpy(self):
+    numpy_tensor = np.asarray(1.0)
+    tensor = constant_op.constant(numpy_tensor)
+    self.assertAllEqual(numpy_tensor.ndim, tensor.ndim)
+
+    numpy_tensor = np.asarray([1.0, 2.0, 3.0])
+    tensor = constant_op.constant(numpy_tensor)
+    self.assertAllEqual(numpy_tensor.ndim, tensor.ndim)
+
+    numpy_tensor = np.asarray([[1.0, 2.0, 3.0], [1.0, 2.0, 3.0]])
+    tensor = constant_op.constant(numpy_tensor)
+    self.assertAllEqual(numpy_tensor.ndim, tensor.ndim)
+
   def testCopy(self):
     t = constant_op.constant(1.0)
     tt = copy.copy(t)
@@ -174,8 +193,8 @@ class TFETensorTest(test_util.TensorFlowTestCase):
     np.set_printoptions(threshold=2, edgeitems=1)
 
     t = _create_tensor(np.arange(10, dtype=np.int32))
-    self.assertIn("[0 ..., 9]", str(t))
-    self.assertIn("[0, ..., 9]", repr(t))
+    self.assertTrue(re.match(r".*\[.*0.*\.\.\..*9.*\]", str(t)))
+    self.assertTrue(re.match(r".*\[.*0.*\.\.\..*9.*\]", repr(t)))
 
     # Clean up: reset to previous printoptions.
     np.set_printoptions(threshold=orig_threshold, edgeitems=orig_edgeitems)
@@ -259,13 +278,8 @@ class TFETensorUtilTest(test_util.TensorFlowTestCase):
 
     with self.assertRaisesRegexp(
         TypeError,
-        r"tensor_list argument must be a list. Got \"EagerTensor\""):
+        r"tensors argument must be a list or a tuple. Got \"EagerTensor\""):
       pywrap_tensorflow.TFE_Py_TensorShapeSlice(t1, -2)
-
-    with self.assertRaisesRegexp(
-        TypeError,
-        r"tensor_list argument must be a list. Got \"tuple\""):
-      pywrap_tensorflow.TFE_Py_TensorShapeSlice((t1,), -2)
 
   def testNegativeSliceDim(self):
     t1 = _create_tensor([1, 2], dtype=dtypes.int32)
@@ -277,6 +291,11 @@ class TFETensorUtilTest(test_util.TensorFlowTestCase):
 
   def testUnicode(self):
     self.assertEqual(constant_op.constant(u"asdf").numpy(), b"asdf")
+
+  def testFloatTensor(self):
+    self.assertEqual(dtypes.float64, _create_tensor(np.float64()).dtype)
+    self.assertEqual(dtypes.float32, _create_tensor(np.float32()).dtype)
+    self.assertEqual(dtypes.float32, _create_tensor(0.0).dtype)
 
   def testSliceDimOutOfRange(self):
     t1 = _create_tensor([[1, 2], [3, 4], [5, 6]], dtype=dtypes.int32)

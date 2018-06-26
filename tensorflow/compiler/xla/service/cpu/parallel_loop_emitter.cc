@@ -24,23 +24,26 @@ namespace cpu {
 
 ParallelLoopEmitter::ParallelLoopEmitter(
     const llvm_ir::ElementGenerator& target_element_generator,
-    const llvm_ir::IrArray& target_array, const LoopBounds* dynamic_loop_bounds,
-    llvm::IRBuilder<>* ir_builder)
+    const llvm_ir::IrArray& target_array,
+    const DynamicLoopBounds* dynamic_loop_bounds, llvm::IRBuilder<>* ir_builder)
     : LoopEmitter(target_element_generator, target_array, ir_builder),
       dynamic_loop_bounds_(dynamic_loop_bounds) {}
 
-llvm_ir::IrArray::Index ParallelLoopEmitter::EmitIndexAndSetExitBasicBlock(
-    tensorflow::StringPiece loop_name) {
+std::vector<llvm_ir::IrArray::Index>
+ParallelLoopEmitter::EmitIndexAndSetExitBasicBlock(
+    tensorflow::StringPiece loop_name, llvm::Type* index_type) {
+  CHECK_NE(index_type, nullptr);
+
   CHECK(!ShapeUtil::IsTuple(shape_));
   CHECK(!ShapeUtil::IsScalar(shape_));
 
   llvm_ir::ForLoopNest loop_nest(loop_name, ir_builder_);
   const int64 num_dims = shape_.dimensions_size();
-  llvm_ir::IrArray::Index array_index(num_dims);
+  llvm_ir::IrArray::Index array_index(index_type, num_dims);
 
   // Add loops from outer-most to inner-most dimensions.
-  for (int i = shape_.layout().minor_to_major_size() - 1; i >= 0; --i) {
-    const int64 dimension = shape_.layout().minor_to_major(i);
+  for (int i = LayoutUtil::MinorToMajor(shape_).size() - 1; i >= 0; --i) {
+    const int64 dimension = LayoutUtil::Minor(shape_.layout(), i);
     const int bounds_index = num_dims - 1 - i;
     if (bounds_index < dynamic_loop_bounds_->size()) {
       // Emit dynamic loop bounds for this dimension. Dynamic loop bounds
@@ -69,7 +72,7 @@ llvm_ir::IrArray::Index ParallelLoopEmitter::EmitIndexAndSetExitBasicBlock(
   exit_bb_ = loop_nest.GetOuterLoopExitBasicBlock();
   CHECK(exit_bb_ != nullptr);
 
-  return array_index;
+  return {array_index};
 }
 
 }  // namespace cpu

@@ -51,7 +51,7 @@ class HloToIrBindings {
 
   // Rebinds the given HLO to the LLVM IR value that represent its address.
   void BindHloToIrValue(const HloInstruction& hlo, llvm::Value* ir_value,
-                        const ShapeIndex& shape_index = {});
+                        ShapeIndexView shape_index = {});
 
   // Unbinds all IR values that's defined in an LLVM function, e.g., function
   // arguments and stack variables. Global variables will be kept in bindings_.
@@ -66,13 +66,14 @@ class HloToIrBindings {
   }
 
   llvm::Value* GetTempBufferBase() const { return temp_buffer_base_; }
+  void SetTempBufferBase(llvm::Value* v) { temp_buffer_base_ = v; }
 
   // A helper method that returns the base pointer of the IrArray containing the
   // output of "inst".at the given ShapeIndex.
   llvm::Value* GetBasePointer(const HloInstruction& hlo,
-                              const ShapeIndex& shape_index = {}) const {
+                              ShapeIndexView shape_index = {}) const {
     auto it = base_ptrs_.find(&hlo);
-    CHECK(it != base_ptrs_.end());
+    CHECK(it != base_ptrs_.end()) << hlo.ToString();
     return it->second.element(shape_index);
   }
 
@@ -87,6 +88,8 @@ class HloToIrBindings {
                               const HloInstruction& consumer,
                               const ShapeIndex& shape_index = {});
 
+  string ToString() const;
+
  private:
   // Emits IR to resolve (possibly) recursive GetTupleElement instructions.
   llvm::Value* EmitGetTupleElement(const HloInstruction* gte,
@@ -94,7 +97,7 @@ class HloToIrBindings {
 
   // Returns an llvm typed ir representation of 'ir_value' based on 'hlo' shape.
   llvm::Value* GetTypedIrValue(const HloInstruction& hlo,
-                               const ShapeIndex& shape_index,
+                               ShapeIndexView shape_index,
                                llvm::Value* ir_value);
 
   const BufferAssignment* buffer_assignment_;
@@ -111,7 +114,7 @@ class HloToIrBindings {
   std::unordered_map<const HloInstruction*, ShapeTree<llvm::Value*>> base_ptrs_;
 
   // The address of the memory block that contains all temporary buffers.
-  llvm::Value* temp_buffer_base_;
+  llvm::Value* temp_buffer_base_ = nullptr;
 
   llvm_ir::AliasAnalysis alias_analysis_;
 };

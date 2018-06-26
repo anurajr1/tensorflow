@@ -61,10 +61,10 @@ void XlaArgMinMaxOp::Compile(XlaOpKernelContext* ctx) {
 
   DataType index_type = output_type(0);
 
-  xla::ComputationBuilder* b = ctx->builder();
-  xla::ComputationDataHandle input = ctx->Input(0);
+  xla::XlaBuilder* b = ctx->builder();
+  xla::XlaOp input = ctx->Input(0);
 
-  xla::ComputationDataHandle output;
+  xla::XlaOp output;
   if (is_min_) {
     OP_REQUIRES_OK(ctx,
                    XlaHelpers::ArgMin(b, ctx, input, input_shape, input_type(0),
@@ -80,7 +80,10 @@ void XlaArgMinMaxOp::Compile(XlaOpKernelContext* ctx) {
 
 XlaArgMaxOp::XlaArgMaxOp(OpKernelConstruction* ctx)
     : XlaArgMinMaxOp(ctx, /*is_min=*/false) {}
-REGISTER_XLA_OP(Name("ArgMax").Device(DEVICE_GPU_XLA_JIT), XlaArgMaxOp);
+REGISTER_XLA_OP(Name("ArgMax")
+                    .Device(DEVICE_GPU_XLA_JIT)
+                    .CompileTimeConstInput("dimension"),
+                XlaArgMaxOp);
 
 namespace {
 
@@ -90,7 +93,7 @@ class XlaArgMinOp : public XlaArgMinMaxOp {
 };
 XlaArgMinOp::XlaArgMinOp(OpKernelConstruction* ctx)
     : XlaArgMinMaxOp(ctx, /*is_min=*/true) {}
-REGISTER_XLA_OP(Name("ArgMin"), XlaArgMinOp);
+REGISTER_XLA_OP(Name("ArgMin").CompileTimeConstInput("dimension"), XlaArgMinOp);
 
 }  // namespace
 }  // namespace tensorflow

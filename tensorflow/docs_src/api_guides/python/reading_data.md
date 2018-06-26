@@ -16,8 +16,8 @@ There are four methods of getting data into a TensorFlow program:
 
 ## `tf.data` API
 
-See the @{$datasets$programmer's guide} for an in-depth explanation of
-@{tf.data.Dataset}. The `tf.data` API enables you to extract and preprocess data
+See the @{$guide/datasets} for an in-depth explanation of @{tf.data.Dataset}.
+The `tf.data` API enables you to extract and preprocess data
 from different input/file formats, and apply transformations such as batching,
 shuffling, and mapping functions over the dataset. This is an improved version
 of the old input methods---feeding and `QueueRunner`---which are described
@@ -51,8 +51,7 @@ it is executed without a feed, so you won't forget to feed it.
 
 An example using `placeholder` and feeding to train on MNIST data can be found
 in
-[`tensorflow/examples/tutorials/mnist/fully_connected_feed.py`](https://www.tensorflow.org/code/tensorflow/examples/tutorials/mnist/fully_connected_feed.py),
-and is described in the @{$mechanics$MNIST tutorial}.
+[`tensorflow/examples/tutorials/mnist/fully_connected_feed.py`](https://www.tensorflow.org/code/tensorflow/examples/tutorials/mnist/fully_connected_feed.py).
 
 ## `QueueRunner`
 
@@ -175,14 +174,25 @@ For example,
 [`tensorflow/examples/how_tos/reading_data/convert_to_records.py`](https://www.tensorflow.org/code/tensorflow/examples/how_tos/reading_data/convert_to_records.py)
 converts MNIST data to this format.
 
-To read a file of TFRecords, use
-@{tf.TFRecordReader} with
-the @{tf.parse_single_example}
-decoder. The `parse_single_example` op decodes the example protocol buffers into
-tensors. An MNIST example using the data produced by `convert_to_records` can be
-found in
-[`tensorflow/examples/how_tos/reading_data/fully_connected_reader.py`](https://www.tensorflow.org/code/tensorflow/examples/how_tos/reading_data/fully_connected_reader.py),
-which you can compare with the `fully_connected_feed` version.
+The recommended way to read a TFRecord file is with a @{tf.data.TFRecordDataset}, [as in this example](https://www.tensorflow.org/code/tensorflow/examples/how_tos/reading_data/fully_connected_reader.py):
+
+``` python
+    dataset = tf.data.TFRecordDataset(filename)
+    dataset = dataset.repeat(num_epochs)
+
+    # map takes a python function and applies it to every sample
+    dataset = dataset.map(decode)
+```
+
+To accomplish the same task with a queue based input pipeline requires the following code
+(using the same `decode` function from the above example): 
+
+``` python
+  filename_queue = tf.train.string_input_producer([filename], num_epochs=num_epochs)
+  reader = tf.TFRecordReader()
+  _, serialized_example = reader.read(filename_queue)
+  image,label = decode(serialized_example)
+```
 
 ### Preprocessing
 
@@ -501,8 +511,8 @@ You can have the train and eval in the same graph in the same process, and share
 their trained variables or layers. See @{$variables$the shared variables tutorial}.
 
 To support the single-graph approach
-@{$programmers_guide/datasets$`tf.data`} also supplies
-@{$programmers_guide/datasets#creating_an_iterator$advanced iterator types} that
+@{$guide/datasets$`tf.data`} also supplies
+@{$guide/datasets#creating_an_iterator$advanced iterator types} that
 that allow the user to change the input pipeline without rebuilding the graph or
 session.
 

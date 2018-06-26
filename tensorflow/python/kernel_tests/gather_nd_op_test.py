@@ -197,7 +197,21 @@ class GatherNdTest(test.TestCase):
     self.assertEqual(None, shape.ndims)
     self.assertEqual(None, shape[0].value)
 
-  def testBadIndices(self):
+  def testBadIndicesCPU(self):
+    with self.test_session(use_gpu=False):
+      params = [0, 1, 2]
+      indices = [[[0], [7]]]  # Make this one higher rank
+      gather_nd = array_ops.gather_nd(params, indices)
+      with self.assertRaisesOpError(
+          r"flat indices\[1, :\] = \[7\] does not index into param "
+          r"\(shape: \[3\]\)"):
+        gather_nd.eval()
+
+  def _disabledTestBadIndicesGPU(self):
+    # TODO disabled due to different behavior on GPU and CPU
+    # On GPU the bad indices do not raise error but fetch 0 values
+    if not test.is_gpu_available():
+      return
     with self.test_session(use_gpu=True):
       params = [0, 1, 2]
       indices = [[[0], [7]]]  # Make this one higher rank
@@ -207,7 +221,21 @@ class GatherNdTest(test.TestCase):
           r"\(shape: \[3\]\)"):
         gather_nd.eval()
 
-  def testBadIndicesWithSlices(self):
+  def testBadIndicesWithSlicesCPU(self):
+    with self.test_session(use_gpu=False):
+      params = [[0, 1, 2]]
+      indices = [[[0], [0], [1]]]  # Make this one higher rank
+      gather_nd = array_ops.gather_nd(params, indices)
+      with self.assertRaisesOpError(
+          r"flat indices\[2, :\] = \[1\] does not index into param "
+          r"\(shape: \[1,3\]\)"):
+        gather_nd.eval()
+
+  def _disabledTestBadIndicesWithSlicesGPU(self):
+    # TODO disabled due to different behavior on GPU and CPU
+    # On GPU the bad indices do not raise error but fetch 0 values
+    if not test.is_gpu_available():
+      return
     with self.test_session(use_gpu=True):
       params = [[0, 1, 2]]
       indices = [[[0], [0], [1]]]  # Make this one higher rank
@@ -252,6 +280,35 @@ class GatherNdTest(test.TestCase):
     grads = gradients_impl.gradients([outputs], [inputs], [grad_vals])[0]
     expected_grads = np.array(
         [[[5, 6], [1, 2]], [[3, 4], [7, 8]]], dtype=np.float64)
+    with self.test_session(use_gpu=True):
+      self.assertAllEqual(expected_grads, grads.eval())
+
+  def testGradientsRank7Elements(self):
+    # Shape [1,1,2,1,1,2,2]
+    indices = constant_op.constant(
+        [[[
+            [[[[0, 0, 0, 0, 0, 1], [0, 0, 1, 0, 0, 0]]]],
+            [[[[0, 0, 0, 0, 0, 0], [0, 0, 1, 0, 0, 1]]]]
+        ]]],
+        dtype=dtypes.int32)
+    inputs = constant_op.constant(
+        [[[
+            [[[[1, 3], [5, 7]]]],
+            [[[[2, 4], [6, 8]]]]
+        ]]], dtype=dtypes.float64)
+    outputs = array_ops.gather_nd(inputs, indices)
+
+    grad_vals = constant_op.constant(
+        [[[
+            [[[[1, 2], [3, 4]]]],
+            [[[[5, 6], [7, 8]]]]
+        ]]], dtype=dtypes.float64)
+    grads = gradients_impl.gradients([outputs], [inputs], [grad_vals])[0]
+    expected_grads = np.array(
+        [[[
+            [[[[5, 6], [1, 2]]]],
+            [[[[3, 4], [7, 8]]]]
+        ]]], dtype=np.float64)
     with self.test_session(use_gpu=True):
       self.assertAllEqual(expected_grads, grads.eval())
 

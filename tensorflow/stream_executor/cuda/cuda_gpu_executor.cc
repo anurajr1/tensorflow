@@ -66,8 +66,7 @@ limitations under the License.
 extern bool FLAGS_check_gpu_leaks;
 bool FLAGS_prefer_cubin_to_ptx = true;
 
-namespace perftools {
-namespace gputools {
+namespace stream_executor {
 namespace cuda {
 
 // Hook that can be used to CUBIN-ate PTX before it is loaded into the driver.
@@ -181,11 +180,11 @@ bool CUDAExecutor::FindOnDiskForComputeCapability(
 static string GetBinaryDir(bool strip_exe) {
   char exe_path[PATH_MAX] = {0};
 #if defined(__APPLE__)
-    uint32_t buffer_size = 0U;
-    _NSGetExecutablePath(nullptr, &buffer_size);
-    char unresolved_path[buffer_size];
-    _NSGetExecutablePath(unresolved_path, &buffer_size);
-    CHECK_ERR(realpath(unresolved_path, exe_path) ? 1 : -1);
+  uint32_t buffer_size = 0U;
+  _NSGetExecutablePath(nullptr, &buffer_size);
+  char unresolved_path[buffer_size];
+  _NSGetExecutablePath(unresolved_path, &buffer_size);
+  CHECK_ERR(realpath(unresolved_path, exe_path) ? 1 : -1);
 #else
 #if defined(PLATFORM_WINDOWS)
   HMODULE hModule = GetModuleHandle(NULL);
@@ -380,9 +379,9 @@ bool CUDAExecutor::Launch(Stream *stream, const ThreadDim &thread_dims,
                                 thread_dims.z, args.number_of_shared_bytes(),
                                 custream, kernel_params,
                                 nullptr /* = extra */)) {
-    LOG(ERROR) << "failed to launch CUDA kernel with args: "
+    LOG(ERROR) << "failed to launch CUDA kernel " << kernel.name() << " with "
                << args.number_of_arguments()
-               << "; thread dim: " << thread_dims.ToString()
+               << " args; thread dim: " << thread_dims.ToString()
                << "; block dim: " << block_dims.ToString();
     return false;
   }
@@ -610,10 +609,10 @@ port::Status CUDAExecutor::WaitForEvent(Stream *stream, Event *event) {
                                     AsCUDAEvent(event)->cuda_event())) {
     return port::Status::OK();
   } else {
-    return port::Status{
+    return port::Status(
         port::error::INTERNAL,
         port::Printf("error recording waiting for CUDA event on stream %p",
-                     stream)};
+                     stream));
   }
 }
 
@@ -664,7 +663,7 @@ bool CUDAExecutor::StopTimer(Stream *stream, Timer *timer) {
   return AsCUDATimer(timer)->Stop(AsCUDAStream(stream));
 }
 
-bool CUDAExecutor::BlockHostUntilDone(Stream *stream) {
+port::Status CUDAExecutor::BlockHostUntilDone(Stream *stream) {
   return CUDADriver::SynchronizeStream(context_, AsCUDAStreamValue(stream));
 }
 
@@ -861,6 +860,9 @@ static int TryToReadNumaNode(const string &pci_bus_id, int device_ordinal) {
 #elif defined(PLATFORM_WINDOWS)
   // Windows support for NUMA is not currently implemented. Return node 0.
   return 0;
+#elif defined(__aarch64__)
+  LOG(INFO) << "ARM64 does not support NUMA - returning NUMA node zero";
+  return 0;
 #else
   VLOG(2) << "trying to read NUMA node for device ordinal: " << device_ordinal;
   static const int kUnknownNumaNode = -1;
@@ -925,16 +927,129 @@ struct UnqueryableDeviceParams {
   uint64 shared_memory_alloc_granularity;
 };
 
+// http://docs.nvidia.com/cuda/cuda-c-programming-guide/index.html#compute-capabilities
+// https://developer.download.nvidia.com/compute/cuda/CUDA_Occupancy_calculator.xls
 static const UnqueryableDeviceParams kAllUnqueryableDeviceParams[] = {
-  {
-    3, 5,       // compute capability (3.5)
-    16,         // blocks_per_core_limit
-    64 * 1024,  // registers_per_core_limit
-    255,        // registers_per_thread_limit
-    4,          // warp_alloc_granularity
-    256,        // register_alloc_granularity
-    256         // shared_memory_alloc_granularity
-  }
+    {
+        2, 0,       // compute capability (2.0)
+        8,          // blocks_per_core_limit
+        32 * 1024,  // registers_per_core_limit
+        63,         // registers_per_thread_limit
+        2,          // warp_alloc_granularity
+        64,         // register_alloc_granularity
+        128,        // shared_memory_alloc_granularity
+    },
+    {
+        2, 1,       // compute capability (2.1)
+        8,          // blocks_per_core_limit
+        32 * 1024,  // registers_per_core_limit
+        63,         // registers_per_thread_limit
+        2,          // warp_alloc_granularity
+        64,         // register_alloc_granularity
+        128,        // shared_memory_alloc_granularity
+    },
+    {
+        3, 0,       // compute capability (3.0)
+        16,         // blocks_per_core_limit
+        64 * 1024,  // registers_per_core_limit
+        63,         // registers_per_thread_limit
+        4,          // warp_alloc_granularity
+        256,        // register_alloc_granularity
+        256,        // shared_memory_alloc_granularity
+    },
+    {
+        3, 2,       // compute capability (3.2)
+        16,         // blocks_per_core_limit
+        64 * 1024,  // registers_per_core_limit
+        255,        // registers_per_thread_limit
+        4,          // warp_alloc_granularity
+        256,        // register_alloc_granularity
+        256,        // shared_memory_alloc_granularity
+    },
+    {
+        3, 5,       // compute capability (3.5)
+        16,         // blocks_per_core_limit
+        64 * 1024,  // registers_per_core_limit
+        255,        // registers_per_thread_limit
+        4,          // warp_alloc_granularity
+        256,        // register_alloc_granularity
+        256,        // shared_memory_alloc_granularity
+    },
+    {
+        3, 7,        // compute capability (3.7)
+        16,          // blocks_per_core_limit
+        128 * 1024,  // registers_per_core_limit
+        255,         // registers_per_thread_limit
+        4,           // warp_alloc_granularity
+        256,         // register_alloc_granularity
+        256,         // shared_memory_alloc_granularity
+    },
+    {
+        5, 0,       // compute capability (5.0)
+        32,         // blocks_per_core_limit
+        64 * 1024,  // registers_per_core_limit
+        255,        // registers_per_thread_limit
+        4,          // warp_alloc_granularity
+        256,        // register_alloc_granularity
+        256,        // shared_memory_alloc_granularity
+    },
+    {
+        5, 2,       // compute capability (5.2)
+        32,         // blocks_per_core_limit
+        64 * 1024,  // registers_per_core_limit
+        255,        // registers_per_thread_limit
+        4,          // warp_alloc_granularity
+        256,        // register_alloc_granularity
+        256,        // shared_memory_alloc_granularity
+    },
+    {
+        5, 3,       // compute capability (5.3)
+        32,         // blocks_per_core_limit
+        64 * 1024,  // registers_per_core_limit
+        255,        // registers_per_thread_limit
+        4,          // warp_alloc_granularity
+        256,        // register_alloc_granularity
+        256,        // shared_memory_alloc_granularity
+    },
+    {
+        6, 0,       // compute capability (6.0)
+        32,         // blocks_per_core_limit
+        64 * 1024,  // registers_per_core_limit
+        255,        // registers_per_thread_limit
+        2,          // warp_alloc_granularity
+        256,        // register_alloc_granularity
+        256,        // shared_memory_alloc_granularity
+    },
+    {
+        6, 1,       // compute capability (6.1)
+        32,         // blocks_per_core_limit
+        64 * 1024,  // registers_per_core_limit
+        255,        // registers_per_thread_limit
+        4,          // warp_alloc_granularity
+        256,        // register_alloc_granularity
+        256,        // shared_memory_alloc_granularity
+    },
+    {
+        6, 2,       // compute capability (6.2)
+        32,         // blocks_per_core_limit
+        64 * 1024,  // registers_per_core_limit
+        255,        // registers_per_thread_limit
+        4,          // warp_alloc_granularity
+        256,        // register_alloc_granularity
+        256,        // shared_memory_alloc_granularity
+    },
+    // TODO(jlebar): Confirm the alloc granularity values for sm_70.  These are
+    // not published in the spreadsheet linked above.  Currently we guess that
+    // they're the same as sm_60.
+    {
+        7, 0,       // compute capability (7.0)
+        32,         // blocks_per_core_limit
+        64 * 1024,  // registers_per_core_limit
+        255,        // registers_per_thread_limit
+        2,          // warp_alloc_granularity
+        256,        // register_alloc_granularity
+        256,        // shared_memory_alloc_granularity
+    },
 };
 
 DeviceDescription *CUDAExecutor::PopulateDeviceDescription() const {
@@ -987,6 +1102,18 @@ DeviceDescription *CUDAExecutor::PopulateDeviceDescription() const {
     builder.set_device_memory_size(device_memory_size);
   }
 
+  port::StatusOr<int> mem_clock_khz = CUDADriver::GetDeviceAttribute(
+      CU_DEVICE_ATTRIBUTE_MEMORY_CLOCK_RATE, device_ordinal_);
+  port::StatusOr<int> mem_bus_width_bits = CUDADriver::GetDeviceAttribute(
+      CU_DEVICE_ATTRIBUTE_GLOBAL_MEMORY_BUS_WIDTH, device_ordinal_);
+  if (mem_clock_khz.ok() && mem_bus_width_bits.ok()) {
+    // Times 2 because HBM is DDR memory; it gets two data bits per each data
+    // lane.
+    builder.set_memory_bandwidth(2 * int64_t{mem_clock_khz.ValueOrDie()} *
+                                 1000 *
+                                 int64_t{mem_bus_width_bits.ValueOrDie()} / 8);
+  }
+
   {
     BlockDim block_dim_limit;
     FillBlockDimLimit(&block_dim_limit);
@@ -999,7 +1126,7 @@ DeviceDescription *CUDAExecutor::PopulateDeviceDescription() const {
     builder.set_name(device_name);
   }
 
-  for (size_t i = 0; i < ARRAYSIZE(kAllUnqueryableDeviceParams); i++) {
+  for (size_t i = 0; i < TF_ARRAYSIZE(kAllUnqueryableDeviceParams); i++) {
     const auto &params = kAllUnqueryableDeviceParams[i];
     if (params.cc_major == cc_major_ && params.cc_minor == cc_minor_) {
       builder.set_blocks_per_core_limit(params.blocks_per_core_limit);
@@ -1040,17 +1167,14 @@ DeviceDescription *CUDAExecutor::PopulateDeviceDescription() const {
 
 }  // namespace cuda
 
-namespace gpu = ::perftools::gputools;
-
 void initialize_cuda_gpu_executor() {
-  *gpu::internal::MakeCUDAExecutorImplementation() = [](
-      const gpu::PluginConfig &config) {
-    return new gpu::cuda::CUDAExecutor{config};
+  *internal::MakeCUDAExecutorImplementation() = [](const PluginConfig &config) {
+    return new cuda::CUDAExecutor{config};
   };
 }
 
-}  // namespace gputools
-}  // namespace perftools
+}  // namespace stream_executor
 
-REGISTER_MODULE_INITIALIZER(
-    cuda_gpu_executor, {perftools::gputools::initialize_cuda_gpu_executor();});
+REGISTER_MODULE_INITIALIZER(cuda_gpu_executor, {
+  stream_executor::initialize_cuda_gpu_executor();
+});

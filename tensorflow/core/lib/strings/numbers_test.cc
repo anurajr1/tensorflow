@@ -15,8 +15,8 @@ limitations under the License.
 
 #include "tensorflow/core/lib/strings/numbers.h"
 
-#include <string>
 #include <cmath>
+#include <string>
 #include "tensorflow/core/platform/test.h"
 
 namespace tensorflow {
@@ -289,6 +289,12 @@ TEST(safe_strtof, Float) {
 
   EXPECT_FALSE(safe_strtof("-infinity is awesome", &result));
 
+  // Make sure we exit cleanly if the string is too long
+  char test_str[2 * kFastToBufferSize];
+  for (int i = 0; i < 2 * kFastToBufferSize; ++i) test_str[i] = 'a';
+  test_str[kFastToBufferSize + 1] = '\0';
+  EXPECT_FALSE(safe_strtof(test_str, &result));
+
   EXPECT_TRUE(safe_strtof("-inf", &result));
   EXPECT_EQ(-std::numeric_limits<float>::infinity(), result);
 
@@ -320,6 +326,12 @@ TEST(safe_strtod, Double) {
   EXPECT_TRUE(safe_strtod("0.1234567890123", &result));
   EXPECT_EQ(0.1234567890123, result);
   EXPECT_FALSE(safe_strtod("0.1234567890123abc", &result));
+
+  // Make sure we exit cleanly if the string is too long
+  char test_str[2 * kFastToBufferSize];
+  for (int i = 0; i < 2 * kFastToBufferSize; ++i) test_str[i] = 'a';
+  test_str[kFastToBufferSize + 1] = '\0';
+  EXPECT_FALSE(safe_strtod(test_str, &result));
 
   // Overflow to infinity, underflow to 0.
   EXPECT_TRUE(safe_strtod("1e310", &result));

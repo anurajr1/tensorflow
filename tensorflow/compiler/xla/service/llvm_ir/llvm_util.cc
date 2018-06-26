@@ -20,9 +20,11 @@ limitations under the License.
 #include <vector>
 
 #include "llvm/IR/DerivedTypes.h"
+#include "llvm/IR/GlobalValue.h"
 #include "llvm/IR/MDBuilder.h"
 #include "llvm/IR/Operator.h"
 #include "llvm/Target/TargetOptions.h"
+#include "llvm/Transforms/Utils/Cloning.h"
 #include "tensorflow/compiler/xla/layout_util.h"
 #include "tensorflow/compiler/xla/literal_util.h"
 #include "tensorflow/compiler/xla/service/name_uniquer.h"
@@ -32,6 +34,7 @@ limitations under the License.
 #include "tensorflow/core/lib/core/casts.h"
 #include "tensorflow/core/lib/core/errors.h"
 #include "tensorflow/core/lib/io/path.h"
+#include "tensorflow/core/lib/strings/str_util.h"
 #include "tensorflow/core/lib/strings/strcat.h"
 #include "tensorflow/core/platform/env.h"
 #include "tensorflow/core/platform/logging.h"
@@ -61,6 +64,16 @@ llvm::StringRef AsStringRef(tensorflow::StringPiece str) {
   return llvm::StringRef(str.data(), str.size());
 }
 
+std::unique_ptr<llvm::Module> DropConstantInitializers(
+    const llvm::Module& module) {
+  std::unique_ptr<llvm::Module> cloned_module = CloneModule(module);
+  for (llvm::GlobalVariable& global_var : cloned_module->globals()) {
+    global_var.setInitializer(nullptr);
+    global_var.setLinkage(llvm::GlobalValue::LinkageTypes::ExternalLinkage);
+  }
+  return cloned_module;
+}
+
 string DumpModuleToString(const llvm::Module& module) {
   std::string buffer_string;
   llvm::raw_string_ostream ostream(buffer_string);
@@ -74,18 +87,10 @@ llvm::Value* EmitCallToIntrinsic(
     tensorflow::gtl::ArraySlice<llvm::Value*> operands,
     tensorflow::gtl::ArraySlice<llvm::Type*> overloaded_types,
     llvm::IRBuilder<>* ir_builder) {
-  std::vector<llvm::Type*> types;
-  for (auto type : overloaded_types) {
-    types.push_back(type);
-  }
   llvm::Module* module = ModuleFromIRBuilder(ir_builder);
-  llvm::Function* intrinsic =
-      llvm::Intrinsic::getDeclaration(module, intrinsic_id, types);
-  std::vector<llvm::Value*> operands_vec;
-  for (auto operand : operands) {
-    operands_vec.push_back(operand);
-  }
-  return ir_builder->CreateCall(intrinsic, operands_vec);
+  llvm::Function* intrinsic = llvm::Intrinsic::getDeclaration(
+      module, intrinsic_id, AsArrayRef(overloaded_types));
+  return ir_builder->CreateCall(intrinsic, AsArrayRef(operands));
 }
 
 llvm::Value* EmitFloatMax(llvm::Value* lhs_value, llvm::Value* rhs_value,
@@ -94,8 +99,10 @@ llvm::Value* EmitFloatMax(llvm::Value* lhs_value, llvm::Value* rhs_value,
     auto cmp = ir_builder->CreateFCmpUGE(lhs_value, rhs_value);
     return ir_builder->CreateSelect(cmp, lhs_value, rhs_value);
   } else {
-    return EmitCallToIntrinsic(llvm::Intrinsic::maxnum, {lhs_value, rhs_value},
-                               {lhs_value->getType()}, ir_builder);
+    auto cmp_ge = ir_builder->CreateFCmpOGE(lhs_value, rhs_value);
+    auto lhs_is_nan = ir_builder->CreateFCmpUNE(lhs_value, lhs_value);
+    auto sel_lhs = ir_builder->CreateOr(cmp_ge, lhs_is_nan);
+    return ir_builder->CreateSelect(sel_lhs, lhs_value, rhs_value);
   }
 }
 
@@ -105,8 +112,10 @@ llvm::Value* EmitFloatMin(llvm::Value* lhs_value, llvm::Value* rhs_value,
     auto cmp = ir_builder->CreateFCmpULE(lhs_value, rhs_value);
     return ir_builder->CreateSelect(cmp, lhs_value, rhs_value);
   } else {
-    return EmitCallToIntrinsic(llvm::Intrinsic::minnum, {lhs_value, rhs_value},
-                               {lhs_value->getType()}, ir_builder);
+    auto cmp_le = ir_builder->CreateFCmpOLE(lhs_value, rhs_value);
+    auto lhs_is_nan = ir_builder->CreateFCmpUNE(lhs_value, lhs_value);
+    auto sel_lhs = ir_builder->CreateOr(cmp_le, lhs_is_nan);
+    return ir_builder->CreateSelect(sel_lhs, lhs_value, rhs_value);
   }
 }
 
@@ -142,7 +151,16 @@ llvm::Type* PrimitiveTypeToIrType(PrimitiveType element_type,
       return llvm::Type::getInt8Ty(module->getContext());
     case S16:
     case U16:
+    case BF16:
+      // For BF16 we just need some type that is 16 bits wide so that it will
+      // take up the right amount of space in memory. LLVM does not have a BF16
+      // type (the LLVM half type is IEEE 16 bit floating point, not bfloat), so
+      // we can't map it directly to an LLVM type. We will not map a BF16
+      // addition to an addition on this type (int16) - this is just the type
+      // used for storage.
       return llvm::Type::getInt16Ty(module->getContext());
+    case F16:
+      return llvm::Type::getHalfTy(module->getContext());
     case S32:
     case U32:
       return llvm::Type::getInt32Ty(module->getContext());
@@ -175,6 +193,10 @@ llvm::Type* PrimitiveTypeToIrType(PrimitiveType element_type,
     // An Opaque is like a void*, use i8*.
     case OPAQUE:
       return llvm::Type::getInt8PtrTy(module->getContext());
+    case TOKEN:
+      // Tokens do not have a physical representation, but the compiler needs
+      // some placeholder type, so use int8*.
+      return llvm::Type::getInt8PtrTy(module->getContext());
     default:
       LOG(FATAL) << "unsupported type " << element_type;
   }
@@ -200,8 +222,8 @@ llvm::Type* ShapeToIrType(const Shape& shape, llvm::Module* module) {
   if (ShapeUtil::IsTuple(shape)) {
     // A tuple buffer is an array of pointers.
     result_type = llvm::ArrayType::get(result_type, shape.tuple_shapes_size());
-  } else {
-    for (int64 dimension : shape.layout().minor_to_major()) {
+  } else if (ShapeUtil::IsArray(shape)) {
+    for (int64 dimension : LayoutUtil::MinorToMajor(shape)) {
       result_type =
           llvm::ArrayType::get(result_type, shape.dimensions(dimension));
     }
@@ -227,120 +249,16 @@ StatusOr<Shape> DecodeSelfDescribingShapeConstant(const void* shape_ptr,
   return shape;
 }
 
-namespace {
-
-// Recursively construct a multidimensional LLVM constant which represents the
-// given literal. The minor-to-major dimension ordering in the constant matches
-// that of the literal. For example, given a [2 x 3 x 4] Literal (dimension 0
-// has size 4, dimension 1 has size 3, etc) of primitive type F32 with a
-// minor_to_major value of [2, 1, 0] (column major), a LLVM constant of type
-// [4 x [3 x [2 x float]] will be returned.
-//
-// multi_index is a multidimensional index into the array. dimension_index is an
-// index into the minor_to_major field in the literal shape. This determines
-// which dimension is iterated over in this level of the recursion. Dimensions
-// are iterated from most major down to most minor (highest dimension_index
-// value down to zero).
-llvm::Constant* LiteralToConstant(const Literal& literal, int64 dimension_index,
-                                  std::vector<int64>* multi_index,
-                                  llvm::Module* module) {
-  const Shape& shape = literal.shape();
-  llvm::Type* ir_element_type =
-      llvm_ir::PrimitiveTypeToIrType(shape.element_type(), module);
-  if (dimension_index == -1) {
-    // Base case of the recursion. Index into the data field of the protobuf
-    // with the multi index.
-    llvm::Constant* value;
-    switch (shape.element_type()) {
-      case PRED:
-        value = llvm::ConstantInt::get(ir_element_type,
-                                       literal.Get<bool>(*multi_index));
-        break;
-      case U8:
-        value = llvm::ConstantInt::get(ir_element_type,
-                                       literal.Get<uint8>(*multi_index));
-        break;
-      case S32:
-        value = llvm::ConstantInt::get(ir_element_type,
-                                       literal.Get<int32>(*multi_index));
-        break;
-      case U32:
-        value = llvm::ConstantInt::get(ir_element_type,
-                                       literal.Get<uint32>(*multi_index));
-        break;
-      case S64:
-        value = llvm::ConstantInt::get(ir_element_type,
-                                       literal.Get<int64>(*multi_index));
-        break;
-      case U64:
-        value = llvm::ConstantInt::get(ir_element_type,
-                                       literal.Get<uint64>(*multi_index));
-        break;
-      case F32:
-        value = llvm::ConstantFP::get(ir_element_type,
-                                      literal.Get<float>(*multi_index));
-        break;
-      case F64:
-        value = llvm::ConstantFP::get(ir_element_type,
-                                      literal.Get<double>(*multi_index));
-        break;
-      case C64: {
-        complex64 x = literal.Get<complex64>(*multi_index);
-        value = llvm::ConstantStruct::get(
-            static_cast<llvm::StructType*>(ir_element_type),
-            llvm::ConstantFP::get(llvm_ir::PrimitiveTypeToIrType(F32, module),
-                                  x.real()),
-            llvm::ConstantFP::get(llvm_ir::PrimitiveTypeToIrType(F32, module),
-                                  x.imag()));
-        break;
-      }
-      default:
-        LOG(FATAL) << "unsupported type " << shape.element_type();
-    }
-    return value;
-  }
-
-  // The dimension index starts at the one less than the rank of the array and
-  // decrements with each recursive call. We want to iterate through the
-  // dimensions in major-to-minor order as we recurse so just index into
-  // minor_to_major to get the dimension number for this level of the recursion.
-  int64 dimension = shape.layout().minor_to_major(dimension_index);
-
-  // Recursively call LiteralToConstant to construct subarrays for the
-  // more-minor dimensions. Gather the subarrays into a vector for bundling into
-  // a new (higher-dimensional) ConstantArray.
-  std::vector<llvm::Constant*> elements;
-  for (int64 i = 0; i < shape.dimensions(dimension); ++i) {
-    (*multi_index)[dimension] = i;
-    elements.push_back(
-        LiteralToConstant(literal, dimension_index - 1, multi_index, module));
-  }
-
-  llvm::Type* element_type;
-  if (elements.empty()) {
-    element_type = ir_element_type;
-    for (int i = 0; i < dimension_index; ++i) {
-      int64 index = shape.layout().minor_to_major(i);
-      element_type =
-          llvm::ArrayType::get(element_type, shape.dimensions(index));
-    }
-  } else {
-    element_type = elements[0]->getType();
-  }
-  llvm::ArrayType* aggregate_type =
-      llvm::ArrayType::get(element_type, shape.dimensions(dimension));
-  return llvm::ConstantArray::get(aggregate_type, elements);
-}
-
-}  // namespace
-
 llvm::Constant* ConvertLiteralToIrConstant(const Literal& literal,
                                            llvm::Module* module) {
-  std::vector<int64> multi_index(ShapeUtil::Rank(literal.shape()), 0);
-  llvm::Constant* value = LiteralToConstant(
-      literal, /*dimension_index=*/ShapeUtil::Rank(literal.shape()) - 1,
-      &multi_index, module);
-  return value;
+  const Shape& shape = literal.shape();
+  llvm::Type* type = shape.element_type() == C64
+                         ? llvm::Type::getFloatTy(module->getContext())
+                         : PrimitiveTypeToIrType(shape.element_type(), module);
+  const char* data = static_cast<const char*>(literal.untyped_data());
+  uint64 num_elements = literal.size_bytes() * 8 / GetSizeInBits(type);
+  return llvm::ConstantDataArray::getRaw(
+      llvm::StringRef(data, literal.size_bytes()), num_elements, type);
 }
 
 llvm::AllocaInst* EmitAllocaAtFunctionEntry(llvm::Type* type,
@@ -653,6 +571,19 @@ static string GetProcessUniqueIrFileName(tensorflow::StringPiece prefix) {
   return uniquer->GetUniqueName(prefix);
 }
 
+static Status CreateAndWriteStringToFile(const string& directory_name,
+                                         const string& file_name,
+                                         const string& text) {
+  std::unique_ptr<tensorflow::WritableFile> f;
+  TF_RETURN_IF_ERROR(
+      tensorflow::Env::Default()->RecursivelyCreateDir(directory_name));
+  TF_RETURN_IF_ERROR(
+      tensorflow::Env::Default()->NewWritableFile(file_name, &f));
+  TF_RETURN_IF_ERROR(f->Append(text));
+  TF_RETURN_IF_ERROR(f->Close());
+  return Status::OK();
+}
+
 Status DumpIRToDirectory(const string& directory_name,
                          const string& hlo_module_name,
                          const llvm::Module& llvm_module, bool optimized) {
@@ -667,13 +598,70 @@ Status DumpIRToDirectory(const string& directory_name,
       directory_name,
       tensorflow::strings::StrCat(unique_and_safe_file_name, ".ll"));
 
-  std::unique_ptr<tensorflow::WritableFile> f;
-  TF_RETURN_IF_ERROR(
-      tensorflow::Env::Default()->RecursivelyCreateDir(directory_name));
-  TF_RETURN_IF_ERROR(
-      tensorflow::Env::Default()->NewWritableFile(ir_file_name, &f));
-  TF_RETURN_IF_ERROR(f->Append(DumpModuleToString(llvm_module)));
-  return f->Close();
+  // For some models the embedded constants can be huge, so also dump the module
+  // with the constants stripped to get IR that is easier to manipulate.
+  string ir_no_constant_initializers_file_name = tensorflow::io::JoinPath(
+      directory_name,
+      tensorflow::strings::StrCat(unique_and_safe_file_name, "-noconst.ll"));
+
+  TF_RETURN_IF_ERROR(CreateAndWriteStringToFile(
+      directory_name, ir_file_name, DumpModuleToString(llvm_module)));
+  return CreateAndWriteStringToFile(
+      directory_name, ir_no_constant_initializers_file_name,
+      DumpModuleToString(*DropConstantInitializers(llvm_module)));
+}
+
+llvm::Function* CreateFunction(llvm::FunctionType* function_type,
+                               llvm::GlobalValue::LinkageTypes linkage,
+                               bool enable_fast_math, bool optimize_for_size,
+                               tensorflow::StringPiece name,
+                               llvm::Module* module) {
+  llvm::Function* function =
+      llvm::Function::Create(function_type, linkage, AsStringRef(name), module);
+  function->setCallingConv(llvm::CallingConv::C);
+  function->addFnAttr("no-frame-pointer-elim", "false");
+
+  if (enable_fast_math) {
+    function->addFnAttr("unsafe-fp-math", "true");
+    function->addFnAttr("no-infs-fp-math", "true");
+    function->addFnAttr("no-nans-fp-math", "true");
+    function->addFnAttr("no-signed-zeros-fp-math", "true");
+  }
+
+  // Add the optize attribute to the function if optimizing for size. This
+  // controls internal behavior of some optimization passes (e.g. loop
+  // unrolling).
+  if (optimize_for_size) {
+    function->addFnAttr(llvm::Attribute::OptimizeForSize);
+  }
+
+  return function;
+}
+
+void InitializeLLVMCommandLineOptions(const HloModuleConfig& config) {
+  auto options = config.debug_options().xla_backend_extra_options();
+  if (!options.empty()) {
+    std::vector<string> fake_argv_storage;
+    fake_argv_storage.push_back("");
+    for (const auto& it : options) {
+      // Skip options the XLA backend itself consumes.
+      if (!tensorflow::str_util::StartsWith(it.first, "xla_")) {
+        if (it.second.empty()) {
+          fake_argv_storage.push_back(it.first);
+        } else {
+          fake_argv_storage.push_back(it.first + "=" + it.second);
+        }
+      }
+    }
+
+    VLOG(2) << "Passing argv to LLVM:";
+    std::vector<const char*> fake_argv;
+    for (const auto& s : fake_argv_storage) {
+      fake_argv.push_back(s.c_str());
+      VLOG(2) << s;
+    }
+    llvm::cl::ParseCommandLineOptions(fake_argv.size(), &fake_argv[0]);
+  }
 }
 
 }  // namespace llvm_ir
