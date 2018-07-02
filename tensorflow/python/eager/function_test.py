@@ -103,6 +103,19 @@ class FunctionTest(test.TestCase):
       grads, = gradients_impl.gradients(node, v)
       v.initializer.run()
       self.assertAllEqual(grads.eval(), 2.0)
+      self.assertEqual(grads.shape, v.shape)
+
+  def testGraphEagerIsolation(self):
+
+    @function.defun
+    def f():
+      v = resource_variable_ops.ResourceVariable(1.0)
+      return v.read_value()
+
+    self.assertAllEqual(f(), 1.0)
+
+    with ops.Graph().as_default():
+      self.assertEqual(f().shape, ())
 
   def testBasicDefunOpGraphMode(self):
     matmul = function.defun(math_ops.matmul)

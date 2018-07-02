@@ -530,6 +530,10 @@ Status AlgebraicSimplifierVisitor::HandleConstant(HloInstruction* constant) {
         constant, BuildTupleConstant(computation_, constant->literal()));
   }
 
+  if (constant->shape().element_type() == TOKEN) {
+    return Status::OK();
+  }
+
   // If a literal is all the same element replace it with a scalar broadcast.
   if (ShapeUtil::ElementsIn(constant->shape()) > 1 &&
       constant->literal().IsAllFirst()) {
@@ -1248,9 +1252,10 @@ bool OutputIsPermutationOfOperandElements(HloInstruction* instruction,
   switch (instruction->opcode()) {
     case HloOpcode::kReshape:
     case HloOpcode::kReverse:
-    case HloOpcode::kSort:
     case HloOpcode::kTranspose:
       return true;
+    case HloOpcode::kSort:
+      return (!ShapeUtil::IsTuple(instruction->shape()));
     default:
       return false;
   }
