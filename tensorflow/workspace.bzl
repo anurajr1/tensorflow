@@ -107,11 +107,11 @@ def tf_workspace(path_prefix="", tf_repo_name=""):
   tf_http_archive(
       name = "eigen_archive",
       urls = [
-          "https://mirror.bazel.build/bitbucket.org/eigen/eigen/get/e5e305a158a0.tar.gz",
-          "https://bitbucket.org/eigen/eigen/get/e5e305a158a0.tar.gz",
+          "https://mirror.bazel.build/bitbucket.org/eigen/eigen/get/fd6845384b86.tar.gz",
+          "https://bitbucket.org/eigen/eigen/get/fd6845384b86.tar.gz",
       ],
-      sha256 = "8bbe676d69e7f59070c83a949454b8b6344034e0ebbf686b337528e5dc04c7de",
-      strip_prefix = "eigen-eigen-e5e305a158a0",
+      sha256 = "d956415d784fa4e42b6a2a45c32556d6aec9d0a3d8ef48baee2522ab762556a9",
+      strip_prefix = "eigen-eigen-fd6845384b86",
       build_file = clean_dep("//third_party:eigen.BUILD"),
   )
 
@@ -166,11 +166,11 @@ def tf_workspace(path_prefix="", tf_repo_name=""):
   tf_http_archive(
       name = "com_github_googlecloudplatform_google_cloud_cpp",
       urls = [
-          "https://mirror.bazel.build/github.com/GoogleCloudPlatform/google-cloud-cpp/archive/f9ff105957965bcf87f7cb9a93e951c3d08d1734.tar.gz",
-          "https://github.com/GoogleCloudPlatform/google-cloud-cpp/archive/f9ff105957965bcf87f7cb9a93e951c3d08d1734.tar.gz",
+          "https://mirror.bazel.build/github.com/GoogleCloudPlatform/google-cloud-cpp/archive/53f822805e77ea7715f5b52c592a162c515c7219.tar.gz",
+          "https://github.com/GoogleCloudPlatform/google-cloud-cpp/archive/53f822805e77ea7715f5b52c592a162c515c7219.tar.gz",
       ],
-      sha256 = "edb347aae9869ffdcf8df6288335bcc535fec46da946b385c16968e96a74b208",
-      strip_prefix = "google-cloud-cpp-f9ff105957965bcf87f7cb9a93e951c3d08d1734",
+      sha256 = "06853bfca77ef4aec09db5ab48c548f68ef2e18f17404cbce61f8d9b820f951b",
+      strip_prefix = "google-cloud-cpp-53f822805e77ea7715f5b52c592a162c515c7219",
   )
 
   tf_http_archive(
@@ -751,6 +751,14 @@ def tf_workspace(path_prefix="", tf_repo_name=""):
       urls = [
           "https://mirror.bazel.build/storage.googleapis.com/download.tensorflow.org/models/tflite/mobilenet_ssd_tflite_v1.zip",
           "https://storage.googleapis.com/download.tensorflow.org/models/tflite/mobilenet_ssd_tflite_v1.zip",
+      ],
+      build_file = str(Label("//third_party:tflite_mobilenet.BUILD")),
+  )
+  tf_http_archive(
+      name = "tflite_mobilenet_ssd_quant",
+      sha256 = "a809cd290b4d6a2e8a9d5dad076e0bd695b8091974e0eed1052b480b2f21b6dc",
+      urls = ["https://mirror.bazel.build/storage.googleapis.com/download.tensorflow.org/models/tflite/coco_ssd_mobilenet_v1_0.75_quant_2018_06_29.zip",
+          "https://storage.googleapis.com/download.tensorflow.org/models/tflite/coco_ssd_mobilenet_v1_0.75_quant_2018_06_29.zip",
       ],
       build_file = str(Label("//third_party:tflite_mobilenet.BUILD")),
   )
