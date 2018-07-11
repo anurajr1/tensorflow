@@ -590,6 +590,7 @@ TfLiteStatus AddOpsAndParams(
       case tflite::BuiltinOperator_MAXIMUM:
       case tflite::BuiltinOperator_MINIMUM:
       case tflite::BuiltinOperator_ARG_MAX:
+      case tflite::BuiltinOperator_ARG_MIN:
       case tflite::BuiltinOperator_GREATER:
       case tflite::BuiltinOperator_GREATER_EQUAL:
       case tflite::BuiltinOperator_LESS:
@@ -610,6 +611,7 @@ TfLiteStatus AddOpsAndParams(
       case tflite::BuiltinOperator_RSQRT:
       case tflite::BuiltinOperator_SHAPE:
       case tflite::BuiltinOperator_POW:
+      case tflite::BuiltinOperator_FAKE_QUANT:
         logError("Op code %d is currently not delegated to NNAPI", builtin);
         return kTfLiteError;
         break;
