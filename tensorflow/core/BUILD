@@ -662,6 +662,7 @@ cc_library(
         "lib/random/random_distributions.h",
         "lib/random/simple_philox.h",
         "lib/strings/numbers.h",
+        "lib/strings/proto_serialization.h",
         "lib/strings/str_util.h",
         "lib/strings/strcat.h",
         "lib/strings/stringprintf.h",
@@ -1655,6 +1656,7 @@ cc_library(
     copts = tf_copts(android_optimization_level_override = None) + [
         "-DSUPPORT_SELECTIVE_REGISTRATION",
     ],
+    linkopts = if_android(["-lz"]),
     tags = [
         "manual",
         "notap",
@@ -1678,6 +1680,7 @@ cc_library(
     copts = tf_copts(android_optimization_level_override = None) + tf_opts_nortti_if_android() + [
         "-DSUPPORT_SELECTIVE_REGISTRATION",
     ],
+    linkopts = if_android(["-lz"]),
     tags = [
         "manual",
         "notap",
