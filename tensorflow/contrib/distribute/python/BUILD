@@ -187,6 +187,7 @@ py_library(
         ":multi_worker_strategy",
         ":one_device_strategy",
         ":tpu_strategy",
+        "//tensorflow/contrib/cluster_resolver:cluster_resolver_pip",
         "//tensorflow/contrib/optimizer_v2:training",
         "//tensorflow/python:distribute",
         "//tensorflow/python:framework_ops",
@@ -336,8 +337,7 @@ py_library(
     deps = [
         ":one_device_strategy",
         ":values",
-        "//tensorflow/contrib/tpu",
-        "//tensorflow/contrib/tpu:tpu_py",
+        "//tensorflow/contrib/tpu:tpu_lib",
         "//tensorflow/python:constant_op",
         "//tensorflow/python:control_flow_ops",
         "//tensorflow/python:framework_ops",
