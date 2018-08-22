@@ -106,11 +106,11 @@ def tf_workspace(path_prefix = "", tf_repo_name = ""):
     tf_http_archive(
         name = "com_google_absl",
         urls = [
-            "https://mirror.bazel.build/github.com/abseil/abseil-cpp/archive/9613678332c976568272c8f4a78631a29159271d.tar.gz",
-            "https://github.com/abseil/abseil-cpp/archive/9613678332c976568272c8f4a78631a29159271d.tar.gz",
+            "https://mirror.bazel.build/github.com/abseil/abseil-cpp/archive/fefc83638fb69395d259ed245699310610429064.tar.gz",
+            "https://github.com/abseil/abseil-cpp/archive/fefc83638fb69395d259ed245699310610429064.tar.gz",
         ],
-        sha256 = "1273a1434ced93bc3e703a48c5dced058c95e995c8c009e9bdcb24a69e2180e9",
-        strip_prefix = "abseil-cpp-9613678332c976568272c8f4a78631a29159271d",
+        sha256 = "e5f94a6fcc42cb3f312987a1f8c1a62a915bab4df993cf6cde95f64f2d264259",
+        strip_prefix = "abseil-cpp-fefc83638fb69395d259ed245699310610429064",
         build_file = clean_dep("//third_party:com_google_absl.BUILD"),
     )
 
@@ -830,6 +830,39 @@ def tf_workspace(path_prefix = "", tf_repo_name = ""):
             "https://github.com/bazelbuild/rules_android/archive/v0.1.1.zip",
         ],
         strip_prefix = "rules_android-0.1.1",
+    )
+
+    tf_http_archive(
+        name = "ngraph",
+        urls = [
+            "https://mirror.bazel.build/github.com/NervanaSystems/ngraph/archive/v0.5.0.tar.gz",
+            "https://github.com/NervanaSystems/ngraph/archive/v0.5.0.tar.gz",
+        ],
+        sha256 = "cb35d3d98836f615408afd18371fb13e3400711247e0d822ba7f306c45e9bb2c",
+        strip_prefix = "ngraph-0.5.0",
+        build_file = clean_dep("//third_party/ngraph:ngraph.BUILD"),
+    )
+
+    tf_http_archive(
+        name = "nlohmann_json_lib",
+        urls = [
+            "https://mirror.bazel.build/github.com/nlohmann/json/archive/v3.1.1.tar.gz",
+            "https://github.com/nlohmann/json/archive/v3.1.1.tar.gz",
+        ],
+        sha256 = "9f3549824af3ca7e9707a2503959886362801fb4926b869789d6929098a79e47",
+        strip_prefix = "json-3.1.1",
+        build_file = clean_dep("//third_party/ngraph:nlohmann_json.BUILD"),
+    )
+
+    tf_http_archive(
+        name = "ngraph_tf",
+        urls = [
+            "https://mirror.bazel.build/github.com/NervanaSystems/ngraph-tf/archive/v0.3.0-rc1.tar.gz",
+            "https://github.com/NervanaSystems/ngraph-tf/archive/v0.3.0-rc1.tar.gz",
+        ],
+        sha256 = "7919332cb15120101c3e05c1b969a5e029a6411581312583c8f80b6aaaa83072",
+        strip_prefix = "ngraph-tf-0.3.0-rc1",
+        build_file = clean_dep("//third_party/ngraph:ngraph_tf.BUILD"),
     )
 
     ##############################################################################
