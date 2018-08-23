@@ -586,6 +586,22 @@ class ResourceVariable(variables.RefVariable):
   def __bool__(self):
     return bool(self.read_value())
 
+  def __copy__(self):
+    return self
+
+  def __deepcopy__(self, memo):
+    if not context.executing_eagerly():
+      raise NotImplementedError(
+          "__deepcopy__() is only available when eager execution is enabled.")
+    copied_variable = ResourceVariable(
+        initial_value=self.read_value(),
+        trainable=self._trainable,
+        constraint=self._constraint,
+        dtype=self._dtype,
+        name=self._shared_name + "_copy")
+    memo[self._unique_id] = copied_variable
+    return copied_variable
+
   @property
   def dtype(self):
     """The dtype of this variable."""
@@ -957,6 +973,9 @@ class ResourceVariable(variables.RefVariable):
       if read_value:
         return self._lazy_read(assign_op)
     return assign_op
+
+  def __reduce__(self):
+    return (ResourceVariable, (self.numpy(),))
 
   def scatter_sub(self, sparse_delta, use_locking=False, name=None):
     """Subtracts `IndexedSlices` from this variable.

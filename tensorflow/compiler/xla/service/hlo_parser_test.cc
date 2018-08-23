@@ -1052,7 +1052,7 @@ add {
 
 ENTRY CRS {
   input = f32[8]{0} parameter(0)
-  ROOT crs = f32[8]{0} cross-replica-sum(input), replica_group_ids={}, to_apply=add
+  ROOT crs = f32[8]{0} cross-replica-sum(input), replica_groups={}, to_apply=add
 }
 
 )"
@@ -1070,7 +1070,7 @@ add {
 
 ENTRY CrossReplicaSumWithSubgroups {
   input = f32[128,32]{0,1} parameter(0)
-  ROOT cross-replica-sum = f32[128,32]{0,1} cross-replica-sum(input), replica_group_ids={0,0,1,1}, barrier="abc", to_apply=add
+  ROOT cross-replica-sum = f32[128,32]{0,1} cross-replica-sum(input), replica_groups={{0,1},{2,3}}, barrier="abc", to_apply=add
 }
 
 )"
@@ -1094,7 +1094,7 @@ R"(HloModule AllToAllWithSubgroups
 
 ENTRY AllToAllWithSubgroups {
   input = f32[128,32]{0,1} parameter(0)
-  ROOT a2a = f32[128,32]{0,1} all-to-all(input), replica_groups={{1,2},{3,0}}, barrier="abc"
+  ROOT a2a = f32[128,32]{0,1} all-to-all(input), replica_groups={{1,2},{3,0}}
 }
 
 )"

@@ -791,6 +791,7 @@ TfLiteStatus ParseOpData(const Operator* op, BuiltinOperator op_type,
     case BuiltinOperator_LOGICAL_AND:
     case BuiltinOperator_LOGICAL_NOT:
     case BuiltinOperator_UNPACK:
+    case BuiltinOperator_FLOOR_DIV:
       break;
   }
   return kTfLiteOk;
@@ -802,6 +803,10 @@ TfLiteStatus InterpreterBuilder::ParseNodes(
     const flatbuffers::Vector<flatbuffers::Offset<Operator>>* operators,
     Interpreter* interpreter) {
   TfLiteStatus status = kTfLiteOk;
+
+  // Reduce the number of redundant allocations
+  interpreter->ReserveNodes(operators->Length());
+
   for (int i = 0; i < operators->Length(); ++i) {
     const auto* op = operators->Get(i);
     int index = op->opcode_index();

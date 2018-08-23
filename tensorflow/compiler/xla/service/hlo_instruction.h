@@ -435,9 +435,10 @@ class HloInstruction {
   //
   // `reduction_computation`: the reduction function.
   //
-  // `replica_group_ids`: maps replica ids to subgroup ids. If empty, all
-  // replicas belong to one group. Allreduce will be applied within subgroups.
-  // For example, we have 4 replicas, then replica_group_ids={0,1,0,1} means,
+  // `replica_groups`: each ReplicaGroup contains a list of replica id. If
+  // empty, all replicas belong to one group in the order of 0 - (n-1).
+  // Allreduce will be applied within subgroups.
+  // For example, we have 4 replicas, then replica_groups={{0,2},{1,3}} means,
   // replica 0 and 2 are in subgroup 0, replica 1 and 3 are in subgroup 1.
   //
   // `all_reduce_id`: for Allreduce nodes from different modules, if they have
@@ -448,7 +449,7 @@ class HloInstruction {
   static std::unique_ptr<HloInstruction> CreateCrossReplicaSum(
       const Shape& shape, tensorflow::gtl::ArraySlice<HloInstruction*> operands,
       HloComputation* reduce_computation,
-      tensorflow::gtl::ArraySlice<int64> replica_group_ids,
+      const std::vector<ReplicaGroup>& replica_groups,
       tensorflow::StringPiece barrier,
       const absl::optional<int64>& all_reduce_id);
 
@@ -465,12 +466,9 @@ class HloInstruction {
   // within replica 1, 2, 3, and in the gather phase, the received blocks will
   // be concatenated in the order of 1, 2, 3; another Alltoall will be applied
   // within replica 4, 5, 0, and the concatenation order is 4, 5, 0.
-  //
-  // TODO(b/110096724): This is NOT YET ready to use.
   static std::unique_ptr<HloInstruction> CreateAllToAll(
       const Shape& shape, tensorflow::gtl::ArraySlice<HloInstruction*> operands,
-      const std::vector<ReplicaGroup>& replica_groups,
-      tensorflow::StringPiece barrier);
+      const std::vector<ReplicaGroup>& replica_groups);
 
   // Creates a conversion instruction, where operand is the data to convert and
   // shape is the target shape for the conversion.
@@ -1438,9 +1436,6 @@ class HloInstruction {
 
   // Returns the shape for the Outfeed instruction.
   const Shape& outfeed_shape() const;
-
-  // Delegates to HloAllReduceInstruction::replica_group_ids.
-  const std::vector<int64>& replica_group_ids() const;
 
   // Delegates to HloAllToAllInstruction::replica_groups.
   const std::vector<ReplicaGroup>& replica_groups() const;
