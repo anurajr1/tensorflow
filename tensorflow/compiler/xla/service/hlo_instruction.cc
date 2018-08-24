@@ -24,6 +24,11 @@ limitations under the License.
 #include "absl/algorithm/container.h"
 #include "absl/container/inlined_vector.h"
 #include "absl/memory/memory.h"
+#include "absl/strings/ascii.h"
+#include "absl/strings/escaping.h"
+#include "absl/strings/numbers.h"
+#include "absl/strings/str_cat.h"
+#include "absl/strings/str_join.h"
 #include "tensorflow/compiler/xla/layout_util.h"
 #include "tensorflow/compiler/xla/literal.h"
 #include "tensorflow/compiler/xla/protobuf_util.h"
@@ -41,17 +46,15 @@ limitations under the License.
 #include "tensorflow/core/lib/gtl/flatmap.h"
 #include "tensorflow/core/lib/gtl/flatset.h"
 #include "tensorflow/core/lib/gtl/map_util.h"
-#include "tensorflow/core/lib/strings/str_util.h"
-#include "tensorflow/core/lib/strings/strcat.h"
 #include "tensorflow/core/platform/human_readable_json.h"
 #include "tensorflow/core/platform/logging.h"
 
 namespace xla {
 
-using tensorflow::str_util::CEscape;
-using ::tensorflow::str_util::Join;
-using ::tensorflow::strings::StrAppend;
-using ::tensorflow::strings::StrCat;
+using absl::CEscape;
+using absl::StrAppend;
+using absl::StrCat;
+using absl::StrJoin;
 
 /* static */
 StatusOr<std::unique_ptr<HloInstruction>> HloInstruction::CreateFromProto(
@@ -664,8 +667,7 @@ HloInstruction::CreateReducePrecision(const Shape& shape,
 HloInstruction::CreateCrossReplicaSum(
     const Shape& shape, tensorflow::gtl::ArraySlice<HloInstruction*> operands,
     HloComputation* reduce_computation,
-    const std::vector<ReplicaGroup>& replica_groups,
-    tensorflow::StringPiece barrier,
+    const std::vector<ReplicaGroup>& replica_groups, absl::string_view barrier,
     const absl::optional<int64>& all_reduce_id) {
   return absl::make_unique<HloAllReduceInstruction>(
       shape, operands, reduce_computation, replica_groups, barrier,
@@ -688,7 +690,7 @@ HloInstruction::CreateCrossReplicaSum(
 
 /* static */ std::unique_ptr<HloInstruction> HloInstruction::CreateOutfeed(
     const Shape& outfeed_shape, HloInstruction* operand,
-    HloInstruction* token_operand, tensorflow::StringPiece outfeed_config) {
+    HloInstruction* token_operand, absl::string_view outfeed_config) {
   return absl::make_unique<HloOutfeedInstruction>(
       outfeed_shape, operand, token_operand, outfeed_config);
 }
@@ -1066,7 +1068,7 @@ bool HloInstruction::HasSideEffect() const {
 
 /* static */ std::unique_ptr<HloInstruction> HloInstruction::CreateCustomCall(
     const Shape& shape, tensorflow::gtl::ArraySlice<HloInstruction*> operands,
-    tensorflow::StringPiece custom_call_target) {
+    absl::string_view custom_call_target) {
   return absl::make_unique<HloCustomCallInstruction>(shape, operands,
                                                      custom_call_target);
 }
@@ -1345,7 +1347,7 @@ std::unique_ptr<HloInstruction> HloInstruction::Clone(
         // If names ends with .suffix[0-9]+ then replace with a suffix with the
         // numeric value incremented.
         int64 numeric_suffix;
-        if (tensorflow::strings::safe_strto64(after_suffix, &numeric_suffix)) {
+        if (absl::SimpleAtoi(after_suffix, &numeric_suffix)) {
           clone->name_ =
               StrCat(name().substr(0, index), dot_suffix, numeric_suffix + 1);
         } else {
@@ -1817,7 +1819,7 @@ void HloInstruction::set_false_computation(HloComputation* false_computation) {
 
 string HloInstruction::SignatureString() const {
   string operands =
-      Join(operands_, ", ", [](string* out, HloInstruction* operand) {
+      StrJoin(operands_, ", ", [](string* out, HloInstruction* operand) {
         StrAppend(out, ShapeUtil::HumanString(operand->shape()));
       });
   return StrCat("(", operands, ") -> ", ShapeUtil::HumanString(shape()));
@@ -1964,7 +1966,7 @@ string HloInstruction::OperandsToStringWithCanonicalNameMap(
       slice.size() > kMaxOperandsToShowIfCompact) {
     slice.remove_suffix(slice.size() - kMaxOperandsToShowIfCompact);
   }
-  operands = Join(slice, ", ", [&](string* out, HloInstruction* operand) {
+  operands = StrJoin(slice, ", ", [&](string* out, HloInstruction* operand) {
     // If operand is already been deleted, put `null` to the string output.
     if (operand == nullptr) {
       StrAppend(out, "null ");
@@ -1984,7 +1986,7 @@ string HloInstruction::OperandsToStringWithCanonicalNameMap(
     } else if (!options.compact_operands()) {
       str.push_back(PrintName(operand->name(), options));
     }
-    StrAppend(out, Join(str, " "));
+    StrAppend(out, StrJoin(str, " "));
   });
   const int64 remaining = operands_.size() - slice.size();
   if (slice.size() != operands_.size()) {
@@ -2030,8 +2032,9 @@ std::vector<string> HloInstruction::ExtraAttributesToString(
       extra.push_back(
           StrCat("to_apply=", PrintName(to_apply()->name(), options)));
     } else if (!called_computations().empty()) {
-      extra.push_back(StrCat(
-          "calls=", Join(called_computations(), ", ",
+      extra.push_back(
+          StrCat("calls=",
+                 StrJoin(called_computations(), ", ",
                          [&](string* out, const HloComputation* computation) {
                            StrAppend(out,
                                      PrintName(computation->name(), options));
@@ -2068,12 +2071,12 @@ std::vector<string> HloInstruction::ExtraAttributesToString(
         break;
       default:
         if (!called_computations().empty()) {
-          extra.push_back(
-              StrCat("calls=\n",
-                     Join(called_computations(), ", ",
-                          [&](string* out, const HloComputation* computation) {
-                            StrAppend(out, computation->ToString(new_options));
-                          })));
+          extra.push_back(StrCat(
+              "calls=\n",
+              StrJoin(called_computations(), ", ",
+                      [&](string* out, const HloComputation* computation) {
+                        StrAppend(out, computation->ToString(new_options));
+                      })));
         }
         break;
     }
@@ -2084,11 +2087,11 @@ std::vector<string> HloInstruction::ExtraAttributesToString(
   }
   if (!control_predecessors_.empty()) {
     extra.push_back(StrCat("control-predecessors={",
-                           Join(control_predecessors_, ", ",
-                                [&](string* out, HloInstruction* pre) {
-                                  StrAppend(out,
-                                            PrintName(pre->name(), options));
-                                }),
+                           StrJoin(control_predecessors_, ", ",
+                                   [&](string* out, HloInstruction* pre) {
+                                     StrAppend(out,
+                                               PrintName(pre->name(), options));
+                                   }),
                            "}"));
   }
   if (operand_side_metadata_ != nullptr && user_side_metadata_ != nullptr) {
@@ -2102,10 +2105,10 @@ std::vector<string> HloInstruction::ExtraAttributesToString(
 
 string HloInstruction::ToShortString() const {
   return StrCat("%", name(), " = ", HloOpcodeString(opcode()), "(",
-                Join(operands_, ", ",
-                     [](string* out, HloInstruction* operand) {
-                       StrAppend(out, "%", operand->name());
-                     }),
+                StrJoin(operands_, ", ",
+                        [](string* out, HloInstruction* operand) {
+                          StrAppend(out, "%", operand->name());
+                        }),
                 ")");
 }
 
@@ -2795,7 +2798,7 @@ string PaddingConfigToString(const PaddingConfig& padding) {
                   [](const PaddingConfig::PaddingConfigDimension& dim) {
                     return dim.interior_padding() != 0;
                   });
-  return Join(
+  return StrJoin(
       padding.dimensions(), "x",
       [&](string* out, const PaddingConfig::PaddingConfigDimension& dim) {
         StrAppend(
@@ -2819,16 +2822,15 @@ string OpMetadataToString(const OpMetadata& metadata) {
   if (metadata.source_line() != 0) {
     result.push_back(StrCat("source_line=", metadata.source_line()));
   }
-  return Join(result, " ");
+  return StrJoin(result, " ");
 }
 
 string RandomDistributionToString(const RandomDistribution& distribution) {
-  return tensorflow::str_util::Lowercase(RandomDistribution_Name(distribution));
+  return absl::AsciiStrToLower(RandomDistribution_Name(distribution));
 }
 
 string PrecisionToString(const PrecisionConfigProto::Precision& precision) {
-  return tensorflow::str_util::Lowercase(
-      PrecisionConfigProto::Precision_Name(precision));
+  return absl::AsciiStrToLower(PrecisionConfigProto::Precision_Name(precision));
 }
 
 string ConvolutionDimensionNumbersToString(
@@ -2856,8 +2858,8 @@ string ConvolutionDimensionNumbersToString(
     output_dims[dnums.output_spatial_dimensions(i)] = StrCat(i);
   }
 
-  return StrCat(Join(lhs_dims, ""), "_", Join(rhs_dims, ""), "->",
-                Join(output_dims, ""));
+  return StrCat(StrJoin(lhs_dims, ""), "_", StrJoin(rhs_dims, ""), "->",
+                StrJoin(output_dims, ""));
 }
 
 string HloInstruction::DotDimensionNumbersToString() const {
@@ -2868,19 +2870,21 @@ string HloInstruction::DotDimensionNumbersToString() const {
   const DotDimensionNumbers& dnums = *dot_dimension_numbers_;
   if (!dnums.lhs_batch_dimensions().empty()) {
     result.push_back(StrCat("lhs_batch_dims={",
-                            Join(dnums.lhs_batch_dimensions(), ","), "}"));
+                            StrJoin(dnums.lhs_batch_dimensions(), ","), "}"));
   }
   result.push_back(StrCat("lhs_contracting_dims={",
-                          Join(dnums.lhs_contracting_dimensions(), ","), "}"));
+                          StrJoin(dnums.lhs_contracting_dimensions(), ","),
+                          "}"));
 
   if (!dnums.rhs_batch_dimensions().empty()) {
     result.push_back(StrCat("rhs_batch_dims={",
-                            Join(dnums.rhs_batch_dimensions(), ","), "}"));
+                            StrJoin(dnums.rhs_batch_dimensions(), ","), "}"));
   }
   result.push_back(StrCat("rhs_contracting_dims={",
-                          Join(dnums.rhs_contracting_dimensions(), ","), "}"));
+                          StrJoin(dnums.rhs_contracting_dimensions(), ","),
+                          "}"));
 
-  return Join(result, ", ");
+  return StrJoin(result, ", ");
 }
 
 StatusOr<RandomDistribution> StringToRandomDistribution(const string& name) {
@@ -2894,7 +2898,7 @@ StatusOr<RandomDistribution> StringToRandomDistribution(const string& name) {
     }
     return map;
   }();
-  auto found = map->find(tensorflow::str_util::Lowercase(name));
+  auto found = map->find(absl::AsciiStrToLower(name));
   if (found == map->end()) {
     return InvalidArgument("Unknown distribution");
   }
@@ -2907,15 +2911,14 @@ string HloInstruction::PrecisionConfigToString() const {
   }
   return StrCat(
       "operand_precision={",
-      Join(precision_config_.operand_precision(), ",",
-           [](string* out, int32 precision) {
-             CHECK(PrecisionConfigProto::Precision_IsValid(precision))
-                 << precision;
-             StrAppend(
-                 out,
-                 PrecisionToString(
-                     static_cast<PrecisionConfigProto::Precision>(precision)));
-           }),
+      StrJoin(precision_config_.operand_precision(), ",",
+              [](string* out, int32 precision) {
+                CHECK(PrecisionConfigProto::Precision_IsValid(precision))
+                    << precision;
+                StrAppend(out, PrecisionToString(
+                                   static_cast<PrecisionConfigProto::Precision>(
+                                       precision)));
+              }),
       "}");
 }
 
@@ -2932,7 +2935,7 @@ StatusOr<PrecisionConfigProto::Precision> StringToPrecision(
     }
     return map;
   }();
-  auto found = map->find(tensorflow::str_util::Lowercase(name));
+  auto found = map->find(absl::AsciiStrToLower(name));
   if (found == map->end()) {
     return InvalidArgument("Unknown distribution");
   }

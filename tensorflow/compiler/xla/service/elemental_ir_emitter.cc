@@ -22,6 +22,7 @@ limitations under the License.
 
 // IWYU pragma: no_include "llvm/IR/Intrinsics.gen.inc"
 #include "absl/algorithm/container.h"
+#include "absl/strings/str_cat.h"
 #include "llvm/IR/BasicBlock.h"
 #include "llvm/IR/Instructions.h"
 #include "llvm/IR/Intrinsics.h"
@@ -39,17 +40,16 @@ limitations under the License.
 #include "tensorflow/compiler/xla/util.h"
 #include "tensorflow/compiler/xla/xla_data.pb.h"
 #include "tensorflow/core/lib/random/random.h"
-#include "tensorflow/core/lib/strings/strcat.h"
 #include "tensorflow/core/platform/logging.h"
 #include "tensorflow/core/platform/types.h"
 
 namespace xla {
 
+using absl::StrCat;
 using llvm_ir::AsStringRef;
 using llvm_ir::IrArray;
 using llvm_ir::IrName;
 using llvm_ir::SetToFirstInsertPoint;
-using tensorflow::strings::StrCat;
 
 namespace {
 
@@ -306,18 +306,13 @@ StatusOr<llvm::Value*> ElementalIrEmitter::EmitIntegerUnaryOp(
                                           {operand_value->getType()}, b_);
     }
     case HloOpcode::kSign: {
-      bool is_signed =
-          primitive_util::IsSignedIntegralType(op->shape().element_type());
+      CHECK(primitive_util::IsSignedIntegralType(op->shape().element_type()))
+          << op->shape().element_type();
       auto type =
           llvm_ir::PrimitiveTypeToIrType(op->shape().element_type(), module_);
       auto cmp = b_->CreateICmpEQ(operand_value, GetZero(type));
-      if (is_signed) {
-        auto ashr =
-            b_->CreateAShr(operand_value, type->getIntegerBitWidth() - 1);
-        return Select(cmp, GetZero(type), b_->CreateOr(ashr, 1));
-      } else {
-        return Select(cmp, GetZero(type), GetOne(type));
-      }
+      auto ashr = b_->CreateAShr(operand_value, type->getIntegerBitWidth() - 1);
+      return Select(cmp, GetZero(type), b_->CreateOr(ashr, 1));
     }
     case HloOpcode::kNegate:
       return b_->CreateNeg(operand_value);
