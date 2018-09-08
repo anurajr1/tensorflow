@@ -693,19 +693,57 @@ class GradientTape(object):
   del g  # Drop the reference to the tape
   ```
 
+  By default GradientTape will automatically watch any trainable variables that
+  are accessed inside the context. If you want fine grained control over which
+  variables are watched you can disable automatic tracking by passing
+  `watch_accessed_variables=False` to the tape constructor:
+
+  ```python
+  with tf.GradientTape(watch_accessed_variables=False) as tape:
+    tape.watch(variable_a)
+    y = variable_a ** 2  # Gradients will be available for `variable_a`.
+    z = variable_b ** 3  # No gradients will be avaialble since `variable_b` is
+                         # not being watched.
+  ```
+
+  Note that when using models you should ensure that your variables exist when
+  using `watch_accessed_variables=False`. Otherwise it's quite easy to make your
+  first iteration not have any gradients:
+
+  ```python
+  a = tf.keras.layers.Dense(32)
+  b = tf.keras.layers.Dense(32)
+
+  with tf.GradientTape(watch_accessed_variables=False) as tape:
+    tape.watch(a.variables)  # Since `a.build` has not been called at this point
+                             # `a.variables` will return an empty list and the
+                             # tape will not be watching anything.
+    result = b(a(inputs))
+    tape.gradient(result, a.variables)  # The result of this computation will be
+                                        # a list of `None`s since a's variables
+                                        # are not being watched.
+  ```
+
   Note that only tensors with real or complex dtypes are differentiable.
   """
 
-  def __init__(self, persistent=False):
+  def __init__(self, persistent=False, watch_accessed_variables=True):
     """Creates a new GradientTape.
 
     Args:
       persistent: Boolean controlling whether a persistent gradient tape
         is created. False by default, which means at most one call can
         be made to the gradient() method on this object.
+      watch_accessed_variables: Boolean controlling whether the tape will
+        automatically `watch` any (trainable) variables accessed while the tape
+        is active. Defaults to True meaning gradients can be requested from any
+        result computed in the tape derived from reading a trainable `Variable`.
+        If False users must explicitly `watch` any `Variable`s they want to
+        request gradients from.
     """
     self._tape = None
     self._persistent = persistent
+    self._watch_accessed_variables = watch_accessed_variables
     self._recording = False
     context.context().start_step()
 
@@ -719,15 +757,15 @@ class GradientTape(object):
     if self._recording:
       self._pop_tape()
 
-  def _push_tape(self, existing_tape=False):
+  def _push_tape(self):
     if self._recording:
       raise ValueError("Tape is already recording.")
-    if existing_tape:
-      if self._tape is None:
-        raise ValueError("There is no existing tape.")
-      tape.push_tape(self._tape)
+    if self._tape is None:
+      self._tape = tape.push_new_tape(
+          persistent=self._persistent,
+          watch_accessed_variables=self._watch_accessed_variables)
     else:
-      self._tape = tape.push_new_tape(persistent=self._persistent)
+      tape.push_tape(self._tape)
     self._recording = True
 
   def _pop_tape(self):
@@ -746,7 +784,13 @@ class GradientTape(object):
       tensor: a Tensor or list of Tensors.
     """
     for t in nest.flatten(tensor):
-      tape.watch(self._tape, _handle_or_self(t))
+      if hasattr(t, "handle"):
+        # There are many variable-like objects, all of them currently have
+        # `handle` attribute that points to a tensor. If this changes, internals
+        # of watch_variable need to change as well.
+        tape.watch_variable(self._tape, t)
+      else:
+        tape.watch(self._tape, t)
 
   @tf_contextlib.contextmanager
   def stop_recording(self):
@@ -778,7 +822,7 @@ class GradientTape(object):
     try:
       yield
     finally:
-      self._push_tape(existing_tape=True)
+      self._push_tape()
 
   def reset(self):
     """Clears all information stored in this tape.
@@ -812,6 +856,7 @@ class GradientTape(object):
     ```
     """
     self._pop_tape()
+    self._tape = None
     self._push_tape()
 
   def watched_variables(self):
