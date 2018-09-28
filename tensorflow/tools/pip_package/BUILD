@@ -108,6 +108,7 @@ COMMON_PIP_DEPS = [
     "//tensorflow/python:meta_graph_testdata",
     "//tensorflow/python:spectral_ops_test_util",
     "//tensorflow/python:util_example_parser_configuration",
+    "//tensorflow/python/data/kernel_tests:test_base",
     "//tensorflow/python/debug:debug_pip",
     "//tensorflow/python/eager:eager_pip",
     "//tensorflow/python/kernel_tests/testdata:self_adjoint_eig_op_test_files",
@@ -152,6 +153,7 @@ filegroup(
         "@gemmlowp//:LICENSE",
         "@gif_archive//:COPYING",
         "@highwayhash//:LICENSE",
+        "@icu//:icu4c/LICENSE",
         "@jpeg//:LICENSE.md",
         "@lmdb//:LICENSE",
         "@local_config_sycl//sycl:LICENSE.text",
@@ -167,27 +169,11 @@ filegroup(
         "@zlib_archive//:zlib.h",
         "@org_python_pypi_backports_weakref//:LICENSE",
     ] + select({
-        "//tensorflow:with_aws_support": [
-            "@aws//:LICENSE",
-        ],
-        "//conditions:default": [],
-    }) + select({
-        "//tensorflow:with_gcp_support": [
-            "@com_github_googleapis_googleapis//:LICENSE",
-            "@com_github_googlecloudplatform_google_cloud_cpp//:LICENSE",
-        ],
-        "//conditions:default": [],
-    }) + select({
         "//tensorflow:with_jemalloc_linux_x86_64": [
             "@jemalloc//:COPYING",
         ],
         "//tensorflow:with_jemalloc_linux_ppc64le": [
             "@jemalloc//:COPYING",
-        ],
-        "//conditions:default": [],
-    }) + select({
-        "//tensorflow:with_kafka_support": [
-            "@kafka//:LICENSE",
         ],
         "//conditions:default": [],
     }) + select({
@@ -213,7 +199,16 @@ filegroup(
         "@ngraph_tf//:LICENSE",
         "@nlohmann_json_lib//:LICENSE.MIT",
         "@tbb//:LICENSE",
-    ]) + tf_additional_license_deps(),
+    ]) + tf_additional_license_deps() + select({
+        "//tensorflow:linux_s390x": [],
+        "//tensorflow:windows": [],
+        "//conditions:default": [
+            "@aws//:LICENSE",
+            "@com_github_googleapis_googleapis//:LICENSE",
+            "@com_github_googlecloudplatform_google_cloud_cpp//:LICENSE",
+            "@kafka//:LICENSE",
+        ],
+    }),
 )
 
 sh_binary(

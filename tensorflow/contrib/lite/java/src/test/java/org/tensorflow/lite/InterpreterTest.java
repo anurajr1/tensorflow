@@ -71,7 +71,7 @@ public final class InterpreterTest {
     Path path = MODEL_FILE.toPath();
     FileChannel fileChannel =
         (FileChannel) Files.newByteChannel(path, EnumSet.of(StandardOpenOption.READ));
-    MappedByteBuffer mappedByteBuffer =
+    ByteBuffer mappedByteBuffer =
         fileChannel.map(FileChannel.MapMode.READ_ONLY, 0, fileChannel.size());
     Interpreter interpreter = new Interpreter(mappedByteBuffer);
     float[] oneD = {1.23f, 6.54f, 7.81f};
@@ -118,7 +118,7 @@ public final class InterpreterTest {
     byteBuffer.order(ByteOrder.nativeOrder());
     fileChannel.read(byteBuffer);
     try {
-      Interpreter interpreter = new Interpreter(byteBuffer);
+      new Interpreter(byteBuffer);
       fail();
     } catch (IllegalArgumentException e) {
       assertThat(e)
@@ -323,7 +323,9 @@ public final class InterpreterTest {
     MappedByteBuffer mappedByteBuffer =
         fileChannel.map(FileChannel.MapMode.READ_ONLY, 0, fileChannel.size());
     Interpreter interpreter =
-        new Interpreter(mappedByteBuffer, new Interpreter.Options().setUseNNAPI(true));
+        new Interpreter(
+            mappedByteBuffer,
+            new Interpreter.Options().setUseNNAPI(true).setAllowFp16PrecisionForFp32(true));
     float[] oneD = {1.23f, 6.54f, 7.81f};
     float[][] twoD = {oneD, oneD, oneD, oneD, oneD, oneD, oneD, oneD};
     float[][][] threeD = {twoD, twoD, twoD, twoD, twoD, twoD, twoD, twoD};
