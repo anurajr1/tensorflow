@@ -1,57 +1,33 @@
-# TensorFlow Lite Optimizing Converter command-line examples
+# TensorFlow Lite Converter command-line examples
 
-This page provides examples on how to use TOCO via command line. It is
-complemented by the following documents:
+This page shows how to use the TensorFlow Lite Converter in the command line.
 
-*   [README](../README.md)
-*   [Command-line glossary](cmdline_reference.md)
-*   [Python API examples](python_api.md)
-
-Table of contents:
-
-*   [Command-line tools](#tools)
-    *   [Converting models prior to TensorFlow 1.9.](#pre-tensorflow-1.9)
-*   [Basic examples](#basic)
-    *   [Convert a TensorFlow GraphDef](#graphdef)
-    *   [Convert a TensorFlow SavedModel](#savedmodel)
-    *   [Convert a tf.keras model](#keras)
-*   [Quantization](#quantization)
-    *   [Convert a TensorFlow GraphDef for quantized inference](#graphdef-quant)
-    *   [Use "dummy-quantization" to try out quantized inference on a float
-        graph](#dummy-quant)
-*   [Specifying input and output arrays](#specifying-input-and-output-arrays)
-    *   [Multiple input arrays](#multiple-input-arrays)
-    *   [Multiple output arrays](#multiple-output-arrays)
-    *   [Specifying subgraphs](#specifying-subgraphs)
-*   [Graph visualizations](#graph-visualizations)
-    *   [Using --output_format=GRAPHVIZ_DOT](#using-output-format-graphviz-dot)
-    *   [Using --dump_graphviz_dir](#using-dump-graphviz-dir)
-    *   [Graph "video" logging](#graph-video-logging)
-    *   [Legend for the graph visualizations](#graphviz-legend)
+[TOC]
 
 ## Command-line tools <a name="tools"></a>
 
-There are two approaches to running TOCO via command line.
+There are two approaches to running the converter in the command line.
 
 *   `tflite_convert`: Starting from TensorFlow 1.9, the command-line tool
-    `tflite_convert` will be installed as part of the Python package. All of the
+    `tflite_convert` is installed as part of the Python package. All of the
     examples below use `tflite_convert` for simplicity.
     *   Example: `tflite_convert --output_file=...`
-*   `bazel`: In order to run the latest version of TOCO, [clone the TensorFlow
-    repository](https://www.tensorflow.org/install/source)
-    and use `bazel`. This is the recommended approach for converting models that
-    utilize new features that were not supported by TOCO in TensorFlow 1.9.
+*   `bazel`: In order to run the latest version of the TensorFlow Lite Converter
+    either install the nightly build using
+    [pip](https://www.tensorflow.org/install/pip) or
+    [clone the TensorFlow repository](https://www.tensorflow.org/install/source)
+    and use `bazel`.
     *   Example: `bazel run
         //tensorflow/contrib/lite/python:tflite_convert --
         --output_file=...`
 
-### Converting models prior to TensorFlow 1.9. <a name="pre-tensorflow-1.9"></a>
+### Converting models prior to TensorFlow 1.9 <a name="pre-tensorflow-1.9"></a>
 
-The recommended approach for using TOCO prior to TensorFlow 1.9 is the [Python
-API](python_api.md#pre-tensorflow-1.9). If a command line tool is desired, the
-`toco` command line tool was available in TensorFlow 1.7. Enter `toco --help` in
-Terminal for additional details on the command-line flags available. There were
-no command line tools in TensorFlow 1.8.
+The recommended approach for using the converter prior to TensorFlow 1.9 is the
+[Python API](python_api.md#pre-tensorflow-1.9). If a command line tool is
+desired, the `toco` command line tool was available in TensorFlow 1.7. Enter
+`toco --help` in Terminal for additional details on the command-line flags
+available. There were no command line tools in TensorFlow 1.8.
 
 ## Basic examples <a name="basic"></a>
 
@@ -117,9 +93,9 @@ tflite_convert \
 
 ### Convert a TensorFlow GraphDef for quantized inference <a name="graphdef-quant"></a>
 
-TOCO is compatible with fixed point quantization models described
-[here](https://www.tensorflow.org/performance/quantization). These are float
-models with
+The TensorFlow Lite Converter is compatible with fixed point quantization models
+described [here](https://www.tensorflow.org/performance/quantization). These are
+float models with
 [`FakeQuant*`](https://www.tensorflow.org/api_guides/python/array_ops#Fake_quantization)
 ops inserted at the boundaries of fused layers to record min-max range
 information. This generates a quantized inference workload that reproduces the
@@ -141,12 +117,12 @@ tflite_convert \
 
 ### Use \"dummy-quantization\" to try out quantized inference on a float graph <a name="dummy-quant"></a>
 
-In order to evaluate the possible benefit of generating a quantized graph, TOCO
-allows "dummy-quantization" on float graphs. The flags `--default_ranges_min`
-and `--default_ranges_max` accept plausible values for the min-max ranges of the
-values in all arrays that do not have min-max information. "Dummy-quantization"
-will produce lower accuracy but will emulate the performance of a correctly
-quantized model.
+In order to evaluate the possible benefit of generating a quantized graph, the
+converter allows "dummy-quantization" on float graphs. The flags
+`--default_ranges_min` and `--default_ranges_max` accept plausible values for
+the min-max ranges of the values in all arrays that do not have min-max
+information. "Dummy-quantization" will produce lower accuracy but will emulate
+the performance of a correctly quantized model.
 
 The example below contains a model using Relu6 activation functions. Therefore,
 a reasonable guess is that most activation ranges should be contained in [0, 6].
@@ -207,10 +183,10 @@ tflite_convert \
 ### Specifying subgraphs
 
 Any array in the input file can be specified as an input or output array in
-order to extract subgraphs out of an input graph file. TOCO discards the parts
-of the graph outside of the specific subgraph. Use [graph
-visualizations](#graph-visualizations) to identify the input and output arrays
-that make up the desired subgraph.
+order to extract subgraphs out of an input graph file. The TensorFlow Lite
+Converter discards the parts of the graph outside of the specific subgraph. Use
+[graph visualizations](#graph-visualizations) to identify the input and output
+arrays that make up the desired subgraph.
 
 The follow command shows how to extract a single fused layer out of a TensorFlow
 GraphDef.
@@ -247,9 +223,10 @@ function tends to get fused).
 
 ## Graph visualizations
 
-TOCO can export a graph to the Graphviz Dot format for easy visualization via
-either the `--output_format` flag or the `--dump_graphviz_dir` flag. The
-subsections below outline the use cases for each.
+The converter can export a graph to the Graphviz Dot format for easy
+visualization using either the `--output_format` flag or the
+`--dump_graphviz_dir` flag. The subsections below outline the use cases for
+each.
 
 ### Using `--output_format=GRAPHVIZ_DOT` <a name="using-output-format-graphviz-dot"></a>
 
@@ -323,10 +300,23 @@ As before, these can be rendered to PDFs:
 dot -Tpdf -O /tmp/toco_*.dot
 ```
 
-Sample output files can be seen here:
+Sample output files can be seen here below. Note that it is the same
+`AveragePool` node in the top right of each image.
 
-*   [toco_AT_IMPORT.dot.pdf](https://storage.googleapis.com/download.tensorflow.org/example_images/toco_AT_IMPORT.dot.pdf)
-*   [toco_AFTER_TRANSFORMATIONS.dot.pdf](https://storage.googleapis.com/download.tensorflow.org/example_images/toco_AFTER_TRANSFORMATIONS.dot.pdf).
+<table><tr>
+  <td>
+    <a target="_blank" href="https://storage.googleapis.com/download.tensorflow.org/example_images/toco_AT_IMPORT.dot.pdf">
+      <img src="https://www.tensorflow.org/images/tflite_convert/tflite_convert_before.png"/>
+    </a>
+  </td>
+  <td>
+    <a target="_blank" href="https://storage.googleapis.com/download.tensorflow.org/example_images/toco_AFTER_TRANSFORMATIONS.dot.pdf">
+      <img src="https://www.tensorflow.org/images/tflite_convert/tflite_convert_after.png"/>
+    </a>
+  </td>
+</tr>
+<tr><td>before</td><td>after</td></tr>
+</table>
 
 ### Graph "video" logging
 
@@ -345,7 +335,7 @@ change was introduced in the graph.
     *   Some typically heavy operators (e.g. Conv) are rendered in a
         <span style="background-color:#c53929;color:white;border:1px;border-style:solid;border-color:black;padding:1px">darker
         red</span>.
-*   Arrays are octogons with the following colors:
+*   Arrays are octagons with the following colors:
     *   Constant arrays are
         <span style="background-color:#4285f4;color:white;border:1px;border-style:solid;border-color:black;padding:1px">blue</span>.
     *   Activation arrays are gray:

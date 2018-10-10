@@ -670,10 +670,10 @@ class HloInstruction {
       const Shape& shape, HloInstruction* operand,
       absl::Span<const int64> dimensions);
 
-  // Creates a sort op, with a keys operand, and an optional values operand.
+  // Creates a sort op, with a keys operand, and optional values operands.
   static std::unique_ptr<HloInstruction> CreateSort(
       const Shape& shape, int64 dimension, HloInstruction* keys,
-      HloInstruction* values = nullptr);
+      absl::Span<HloInstruction* const> values = {});
 
   // Creates a while instruction, given a condition computation, a body
   // computation, and the initial value for the input of the computations. For
@@ -733,6 +733,16 @@ class HloInstruction {
   static std::unique_ptr<HloInstruction> CreateCustomCall(
       const Shape& shape, absl::Span<HloInstruction* const> operands,
       absl::string_view custom_call_target, absl::string_view opaque = "");
+
+  // Overload which constrains the layouts of the operand and result. 'shape'
+  // and 'operand_shapes_with_layout' must have layouts.
+  // 'operand_shapes_with_layout' must have a compatible element for each
+  // operand.
+  static std::unique_ptr<HloInstruction> CreateCustomCall(
+      const Shape& shape, absl::Span<HloInstruction* const> operands,
+      absl::string_view custom_call_target,
+      absl::Span<const Shape> operand_shapes_with_layout,
+      absl::string_view opaque = "");
 
   // Creates a tuple instruction with the given elements. This is a convenience
   // wrapper around CreateVariadic.

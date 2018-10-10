@@ -46,11 +46,11 @@ from tensorflow.python.framework import tensor_spec
 from tensorflow.python.ops import array_ops
 from tensorflow.python.ops import cond_v2_impl
 from tensorflow.python.ops import control_flow_ops
+from tensorflow.python.ops import custom_gradient
 from tensorflow.python.ops import functional_ops
 from tensorflow.python.ops import gradients_impl
 from tensorflow.python.ops import resource_variable_ops
 from tensorflow.python.ops import variable_scope
-from tensorflow.python.training import distribution_strategy_context
 from tensorflow.python.util import compat
 from tensorflow.python.util import nest
 from tensorflow.python.util import tf_decorator
@@ -81,47 +81,8 @@ def _create_substitute_placeholder(value, name=None, dtype=None):
   with ops.control_dependencies(None):
     placeholder = graph_placeholder(
         dtype=dtype or value.dtype, shape=value.shape, name=name)
-  _copy_handle_data(value, placeholder)
+  custom_gradient.copy_handle_data(value, placeholder)
   return placeholder
-
-
-def _copy_handle_data(source_t, target_t):
-  """Copies HandleData for variant and resource type tensors if available.
-
-  The CppShapeInferenceResult::HandleData proto contains information about the
-  shapes and types of the element tensors of resource/variant type tensors.
-  We need to copy this across function boundaries, i.e., when capturing a
-  placeholder or when returning a function tensor as output. If we don't do this
-  the element tensors will have unknown shapes, e.g., if a TensorList variant
-  tensor is captured as a placeholder, elements popped from that list would have
-  unknown shape.
-
-  Args:
-    source_t: The tensor to copy HandleData from.
-    target_t: The tensor to copy HandleData to.
-  """
-  if (target_t.dtype == dtypes_module.resource or
-      target_t.dtype == dtypes_module.variant):
-    if isinstance(source_t, ops.EagerTensor):
-      handle_data = source_t._handle_data  # pylint: disable=protected-access
-    else:
-      handle_data = resource_variable_ops.get_resource_handle_data(source_t)
-    if handle_data is not None and handle_data.is_set:
-      # pylint: disable=protected-access
-      pywrap_tensorflow.SetHandleShapeAndType(target_t.graph._c_graph,
-                                              target_t._as_tf_output(),
-                                              handle_data.SerializeToString())
-      # pylint: enable=protected-access
-      # Ensure that shapes and dtypes are propagated.
-      shapes, types = zip(*[(pair.shape, pair.dtype)
-                            for pair in handle_data.shape_and_type])
-      ranks = [len(s.dim) if not s.unknown_rank else -1 for s in shapes]
-      shapes = [[d.size for d in s.dim]
-                if not s.unknown_rank else None for s in shapes]
-      pywrap_tensorflow.TF_GraphSetOutputHandleShapesAndTypes_wrapper(
-          target_t._op._graph._c_graph,  # pylint: disable=protected-access
-          target_t._as_tf_output(),  # pylint: disable=protected-access
-          shapes, ranks, types)
 
 
 def _get_device_functions(ctx, graph):
@@ -240,6 +201,7 @@ class FuncGraph(ops.Graph):
     # from the default graph even in eager mode. Maybe it should be part of the
     # eager context?
     self._distribution_strategy_stack = graph._distribution_strategy_stack
+    self._variable_creator_stack = graph._variable_creator_stack
     # Inherit the graph key, since this is used for matching variables in
     # optimizers.
     self._graph_key = graph._graph_key
@@ -547,7 +509,7 @@ class _EagerDefinedFunction(object):
       for i, shape in enumerate(self._output_shapes):
         outputs[i].set_shape(shape)
       for i, func_graph_output in enumerate(self._func_graph_outputs):
-        _copy_handle_data(func_graph_output, outputs[i])
+        custom_gradient.copy_handle_data(func_graph_output, outputs[i])
       return outputs
 
 
@@ -601,17 +563,6 @@ class Function(object):
         self._func_graph.inputs, self._func_graph.outputs, self._attrs)
     self._backward_graph_function = None
 
-    # Map holding distributed variables, keyed by resource handle tensors.
-    self._distributed_variables = {}
-    strategy = distribution_strategy_context.get_distribution_strategy()
-    for variable in self._func_graph.variables:
-      # If variable is not distributed, unwrap returns [variable].
-      component_variables = strategy.unwrap(variable)
-      # Only update the dictionary when the variable is actually distributed.
-      if (len(component_variables) > 1 or component_variables[0] != variable):
-        for component_variable in component_variables:
-          self._distributed_variables[component_variable.handle] = variable
-
   def __call__(self, *args):
     """Executes the wrapped function.
 
@@ -640,7 +591,6 @@ class Function(object):
       if v.trainable:
         tape.variable_accessed(v)
 
-    captures = self._resolve_captured_inputs()
     tensor_inputs = []
     for i, arg in enumerate(nest.flatten(args)):
       if isinstance(arg, resource_variable_ops.ResourceVariable):
@@ -653,13 +603,60 @@ class Function(object):
         raise ValueError("All inputs to `Function`s must be Tensors; "
                          "on invocation of %s, the %d-th input (%s) was not a "
                          "Tensor." % (self._func_graph.name, i, str(arg)))
-    args = tensor_inputs + captures
+    args = tensor_inputs + self._captured_inputs
 
-    if tape.should_record(tensor_inputs) or tape.should_record(captures):
+    if (tape.should_record(tensor_inputs) or
+        tape.should_record(self._captured_inputs)):
       return self._backprop_call(args)
 
-    outputs = self._inference_function.call(ctx, args)
+    # Only need to override the gradient in graph mode and when we have outputs.
+    if context.executing_eagerly() or not self.outputs:
+      outputs = self._inference_function.call(ctx, args)
+    else:
+      name = "PartitionedCall-%s" % ops.uid()
+
+      @ops.RegisterGradient(name)
+      def grad_fn(op, *doutputs):  # pylint: disable=unused-variable
+        """Gradients of this function."""
+        if op.graph is not ops.get_default_graph():
+          # TODO(apassos) this will still emit SymbolicGradient ops when
+          # nested defuns are being differentiated. We need to somehow figure
+          # out a way to update the FunctionDef corresponding to the calling
+          # function when mutating a call to the forward pass.
+          return gradients_impl._SymGrad(op, list(doutputs))  # pylint: disable=protected-access
+        if self._backward_graph_function is None:
+          self._construct_backprop_function()
+        self._forward_function.add_to_graph(op.graph)
+        func = attr_value_pb2.AttrValue(
+            func=attr_value_pb2.NameAttrList(
+                name=self._forward_function.name))
+        # pylint: disable=protected-access
+        op._set_attr("f", func)
+        types = attr_value_pb2.AttrValue.ListValue(
+            type=self._forward_function._output_types)
+        op._set_attr("Tout", attr_value_pb2.AttrValue(list=types))
+        for i in range(
+            len(outputs), len(self._forward_function._output_types)):
+          t = ops.Tensor(op, i, self._forward_function._output_types[i])
+          t.set_shape(self._forward_function._output_shapes[i])
+          func_graph_output = self._forward_function._func_graph_outputs[i]
+          custom_gradient.copy_handle_data(func_graph_output, t)
+          op._outputs.append(t)
+        # pylint: enable=protected-access
+        side_outputs = op.outputs[len(outputs):]
+        return self._backward_graph_function(
+            *(list(doutputs) + list(side_outputs)))
+
+      with ops.get_default_graph().gradient_override_map(
+          {"PartitionedCall": name}):
+        outputs = self._inference_function.call(ctx, args)
+
     return self._build_call_outputs(outputs)
+
+  @property
+  def name(self):
+    """Function name."""
+    return self._inference_function.name
 
   @property
   def graph(self):
@@ -717,6 +714,10 @@ class Function(object):
     # TODO(akshayka): Consider removing this.
     return nest.map_structure(lambda x: x.dtype if x is not None else None,
                               self._func_graph.structured_outputs)
+
+  def add_to_graph(self, g):
+    """Adds this function into the graph g."""
+    return self._inference_function.add_to_graph(g)
 
   def _construct_backprop_function(self):
     """Constructs the backprop function object for this function."""
@@ -792,32 +793,6 @@ class Function(object):
                           args, backward_function)
     return self._build_call_outputs(real_outputs)
 
-  def _resolve_captured_inputs(self):
-    """Resolve captured distributed variables to their current values.
-
-    Some inputs can be distributed variables. Such variables yield a different
-    component (i.e. actual tf.Variable) variables depending on the context of
-    execution.
-
-    Returns:
-      a list of resolved captured input tensors.
-    """
-    if self._distributed_variables:
-      # Loop over each captured input and check if it corresponds to something
-      # distributed. If so, get its _distributed_container and fetch the
-      # component appropriate for the current execution context.
-      resolved_captured_inputs = self._captured_inputs[:]
-      for i, captured_input in enumerate(self._captured_inputs):
-        distributed_var = self._distributed_variables.get(captured_input, None)
-        if distributed_var is not None:
-          # distributed variables override __getattr__ and substitute the
-          # right component variable. In here, `distributed_var.handle`
-          # actually does the equivalent of
-          # distributed_var.get_current_component_var().handle.
-          resolved_captured_inputs[i] = distributed_var.handle
-      return resolved_captured_inputs
-    return self._captured_inputs
-
   def _build_call_outputs(self, result):
     """Maps the fdef output list to actual output structure.
 
@@ -855,20 +830,12 @@ class Function(object):
     return ret
 
 
-def _get_defun_inputs_from_signature(signature):
-  """Maps a signature to graph-construction inputs."""
-  function_inputs = [
-      graph_placeholder(spec.dtype, spec.shape)
-      for spec in nest.flatten(signature)
-  ]
-  return nest.pack_sequence_as(signature, function_inputs)
-
-
 def _get_defun_inputs_from_args(args):
   """Maps python function args to graph-construction inputs."""
   function_inputs = [
       graph_placeholder(arg.dtype, arg.shape)
-      if isinstance(arg, ops.Tensor) else arg for arg in nest.flatten(args)
+      if isinstance(arg, (ops.Tensor, tensor_spec.TensorSpec))
+      else arg for arg in nest.flatten(args)
   ]
   return nest.pack_sequence_as(args, function_inputs)
 
@@ -912,12 +879,12 @@ def func_graph_from_py_func(name,
   with func_graph.as_default(), AutomaticControlDependencies() as a:
     variable_scope.get_variable_scope().set_use_resource(True)
 
-    if signature is None:
-      func_args = _get_defun_inputs_from_args(args)
-      func_kwargs = _get_defun_inputs_from_args(kwargs)
-    else:
-      func_args = _get_defun_inputs_from_signature(signature)
-      func_kwargs = {}
+    if signature is not None:
+      args = signature
+      kwargs = {}
+
+    func_args = _get_defun_inputs_from_args(args)
+    func_kwargs = _get_defun_inputs_from_args(kwargs)
 
     # Note: `nest.flatten` sorts by keys, as does `_deterministic_dict_values`.
     # Variables to help check whether mutation happens in calling the function
@@ -1006,14 +973,6 @@ def func_graph_from_py_func(name,
         for x in _flatten(func_graph.structured_outputs)
         if x is not None)
 
-    # Some captured variables might be components of DistributedValues.
-    # Instead of storing non-distributed component variables, we
-    # store their distributed containers so we can retrieve the correct
-    # component variables at call-time.
-    strategy = distribution_strategy_context.get_distribution_strategy()
-    for i, variable in enumerate(variables):
-      # If variable is not distributed value_container returns itself.
-      variables[i] = strategy.value_container(variable)
     func_graph.variables = variables
 
   # Register any other functions defined in the graph.
@@ -1138,6 +1097,8 @@ class PolymorphicFunction(object):
       *args: inputs to specialize on.
       **kwargs: inputs to specialize on.
     """
+    if self._input_signature:
+      args, kwargs = None, None
     graph_function, _ = self._maybe_define_function(args, kwargs)
     return graph_function
 
@@ -1326,6 +1287,9 @@ def register(func, *args, **kwargs):
   This won't actually call the function with the inputs, and only put the
   function definition into graph. Register function with different input param
   will result into multiple version of functions registered in graph.
+
+  Also, `args` and `kwargs` are ignored if this `PolymorphicFunction` was
+  created with an `input_signature`.
 
   Args:
     func: the PolymorphicFunction instance that generated by a @defun

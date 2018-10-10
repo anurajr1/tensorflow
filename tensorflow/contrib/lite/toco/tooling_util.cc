@@ -407,6 +407,7 @@ const char* OperatorTypeName(OperatorType type) {
     HANDLE_OPERATORTYPENAME_CASE(CTCBeamSearchDecoder)
     HANDLE_OPERATORTYPENAME_CASE(Unpack)
     HANDLE_OPERATORTYPENAME_CASE(ZerosLike)
+    HANDLE_OPERATORTYPENAME_CASE(UnidirectionalSequenceLstm)
     default:
       LOG(FATAL) << "Unhandled op type";
 #undef HANDLE_OPERATORTYPENAME_CASE
@@ -898,12 +899,12 @@ void CheckNoMissingArray(const Model& model) {
 void FixNoMissingArray(Model* model) {
   for (const auto& op : model->operators) {
     for (const auto& input : op->inputs) {
-      if (!model->HasArray(input)) {
+      if (!model->HasArray(input) && !model->IsOptionalArray(input)) {
         model->GetOrCreateArray(input);
       }
     }
     for (const auto& output : op->outputs) {
-      if (!model->HasArray(output)) {
+      if (!model->HasArray(output) && !model->IsOptionalArray(output)) {
         model->GetOrCreateArray(output);
       }
     }
@@ -1237,11 +1238,15 @@ void DedupeConstantArrays(Model* model, size_t min_size) {
         lhs_array.final_data_type != ArrayDataType::kNone
             ? lhs_array.final_data_type
             : lhs_array.data_type;
-    size_t array_byte_size =
-        lhs_array.buffer->Length() * ElementSize(final_data_type);
-    if (array_byte_size < min_size) {
-      // Too small; skip.
-      continue;
+    // Ignore small arrays, don't check string arrays because it is not possible
+    // to estimate its size.
+    if (final_data_type != ArrayDataType::kString) {
+      size_t array_byte_size =
+          lhs_array.buffer->Length() * ElementSize(final_data_type);
+      if (array_byte_size < min_size) {
+        // Too small; skip.
+        continue;
+      }
     }
 
     auto next_lhs_array_it = lhs_array_it;
