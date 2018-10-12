@@ -46,6 +46,7 @@ from tensorflow.python.framework import tensor_spec
 from tensorflow.python.ops import array_ops
 from tensorflow.python.ops import cond_v2_impl
 from tensorflow.python.ops import control_flow_ops
+from tensorflow.python.ops import control_flow_util
 from tensorflow.python.ops import custom_gradient
 from tensorflow.python.ops import functional_ops
 from tensorflow.python.ops import gradients_impl
@@ -85,12 +86,10 @@ def _create_substitute_placeholder(value, name=None, dtype=None):
   return placeholder
 
 
-def _get_device_functions(ctx, graph):
-  """Returns a tuple of device functions representing the device stack."""
-  if ctx.executing_eagerly():
-    return (pydev.merge_device(ctx.device_name),)
-  else:
-    return tuple(graph._device_functions_outer_to_inner)  # pylint: disable=protected-access
+def _device_stack_has_callable(device_stack):
+  """Checks whether a device stack contains a callable."""
+  return any(callable(spec._device_name_or_function)  # pylint: disable=protected-access
+             for spec in device_stack.peek_objs())
 
 
 def _parse_func_attrs(attributes):
@@ -157,8 +156,8 @@ class FuncGraph(ops.Graph):
   def __init__(self, name):
     """Construct a new FuncGraph.
 
-    The graph will inherit its graph key, collections, seed, device stack, and
-    distribution strategy stack from the current context or graph.
+    The graph will inherit its graph key, collections, seed, and distribution
+    strategy stack from the current context or graph.
 
     Args:
       name: the name of the function.
@@ -181,26 +180,39 @@ class FuncGraph(ops.Graph):
 
     graph = self.outer_graph
 
+    # pylint: disable=protected-access
+    # TODO(b/112906995, nareshmodi): distribution strategy depends on inheriting
+    # this stack from the default graph even in eager mode. Maybe it should be
+    # part of the eager context? This would also allow us to remove a
+    # get_default_graph() call from the function cache lookup.
+    self._distribution_strategy_stack = graph._distribution_strategy_stack
+    # We ignore device placements from any outer scopes while tracing the
+    # function when possible, to avoid hard-coding them in the function
+    # graph. "Default" placements come from the PartitionedCallOp's placement,
+    # so that the same trace of the Python function may be placed on several
+    # different devices and saved functions may be placed on new devices when
+    # restored.
     if context.executing_eagerly():
       self.seed = context.global_seed()
       self._xla_compile = (context.context().device_spec.device_type == "TPU")
-      self._add_device_to_stack(context.context().device_name)
+      if self._distribution_strategy_stack or self._xla_compile:
+        self._add_device_to_stack(context.context().device_name)
     else:
       self.seed = graph.seed
       self._xla_compile = getattr(graph, "_xla_compile", False)
-      self._device_function_stack = graph._device_function_stack.copy()  # pylint: disable=protected-access
-      self._colocation_stack = graph._colocation_stack.copy()  # pylint: disable=protected-access
-
+      # TODO(allenl): Figure out if we can remove colocation stack
+      # specialization (currently used in cond_v2), here and in the cache key.
+      self._colocation_stack = graph._colocation_stack.copy()
+      if (self._distribution_strategy_stack
+          or self._xla_compile
+          or _device_stack_has_callable(graph._device_function_stack)):
+        # Hard-code devices from device functions in the function body
+        self._device_function_stack = graph._device_function_stack.copy()
     # TODO(b/112165328, b/112906995): summaries depend on inheriting collections
     # from the default graph even in eager mode. It'd be nice to not have a
     # default graph with eager execution, so hopefully this will go away when we
     # remove collections.
-    # pylint: disable=protected-access
     self._collections = graph._collections
-    # TODO(b/112906995): distribution strategy depends on inheriting this stack
-    # from the default graph even in eager mode. Maybe it should be part of the
-    # eager context?
-    self._distribution_strategy_stack = graph._distribution_strategy_stack
     self._variable_creator_stack = graph._variable_creator_stack
     # Inherit the graph key, since this is used for matching variables in
     # optimizers.
@@ -501,7 +513,8 @@ class _EagerDefinedFunction(object):
           args=args,
           f=self,
           tout=self._output_types,
-          executing_eagerly=executing_eagerly)
+          executing_eagerly=executing_eagerly,
+          config=ctx.rewriter_config_string)  # pylint: disable=protected-access
 
     if executing_eagerly:
       return outputs
@@ -536,7 +549,7 @@ class Function(object):
   is differentiable under `tf.GradientTape` objects.
   """
 
-  def __init__(self, func_graph, attrs=None):
+  def __init__(self, func_graph, attrs=None, signature=None):
     """Initialize a Function.
 
     Args:
@@ -555,13 +568,12 @@ class Function(object):
     self._output_shapes = tuple(
         output.shape for output in self._func_graph.outputs)
     self._attrs = _parse_func_attrs(attrs or {})
-    self._device_functions = tuple(
-        self._func_graph._device_functions_outer_to_inner)  # pylint: disable=protected-access
 
     self._inference_function = _EagerDefinedFunction(
         _inference_name(self._func_graph.name), self._func_graph,
         self._func_graph.inputs, self._func_graph.outputs, self._attrs)
     self._backward_graph_function = None
+    self._signature = signature
 
   def __call__(self, *args):
     """Executes the wrapped function.
@@ -573,19 +585,9 @@ class Function(object):
       The result of applying the TF function to `args`.
 
     Raises:
-      ValueError: If the current device stack does not match the device stack
-        under which the function was created, or if `args` contains anything
-        other than Tensors or Variables.
+      ValueError: If `args` contains anything other than Tensors or Variables.
     """
     ctx = context.context()
-    device_functions = _get_device_functions(ctx, ops.get_default_graph())
-    if device_functions != self._device_functions:
-      raise ValueError(
-          "The current device stack does not match the device stack under "
-          "which the TensorFlow function '%s' was created.\n"
-          "Current device stack: %s\n%s device stack: %s" %
-          (self._inference_function.name, device_functions,
-           self._inference_function.name, self._device_functions))
 
     for v in self._func_graph.variables:
       if v.trainable:
@@ -599,6 +601,10 @@ class Function(object):
         tensor_inputs.append(arg.handle)
       elif isinstance(arg, ops.Tensor):
         tensor_inputs.append(arg)
+      elif (self._signature is not None and
+            isinstance(self._signature[i], tensor_spec.TensorSpec)):
+        tensor_inputs.append(
+            ops.convert_to_tensor(arg, self._signature[i].dtype))
       else:
         raise ValueError("All inputs to `Function`s must be Tensors; "
                          "on invocation of %s, the %d-th input (%s) was not a "
@@ -840,13 +846,30 @@ def _get_defun_inputs_from_args(args):
   return nest.pack_sequence_as(args, function_inputs)
 
 
+def check_mutation(n1, n2):
+  """Check if two list of arguments are exactly the same."""
+  errmsg = ("Function to be traced should not modify structure of input "
+            "arguments. Check if your function has list and dictionary "
+            "operations that alter input arguments, "
+            "such as `list.pop`, `list.append`")
+  try:
+    nest.assert_same_structure(n1, n2)
+  except ValueError:
+    raise ValueError(errmsg)
+
+  for arg1, arg2 in zip(nest.flatten(n1), nest.flatten(n2)):
+    if arg1 is not arg2:
+      raise ValueError(errmsg)
+
+
 def func_graph_from_py_func(name,
                             python_func,
                             args,
                             kwargs,
                             signature=None,
                             func_graph=None,
-                            experimental_autograph=False):
+                            experimental_autograph=False,
+                            add_control_dependencies=True):
   """Returns a `FuncGraph` generated from `python_func`.
 
   Args:
@@ -865,6 +888,9 @@ def func_graph_from_py_func(name,
       this graph else a new one is built and returned.
     experimental_autograph: whether to use autograph to compile `python_func`.
       See https://www.tensorflow.org/guide/autograph for more information.
+    add_control_dependencies: If True, automatically adds control dependencies
+      to ensure program order matches execution order and stateful ops always
+      execute.
 
   Returns:
     A FuncGraph.
@@ -876,7 +902,11 @@ def func_graph_from_py_func(name,
   if func_graph is None:
     func_graph = FuncGraph(name)
   assert isinstance(func_graph, FuncGraph)
-  with func_graph.as_default(), AutomaticControlDependencies() as a:
+  if add_control_dependencies:
+    control_manager = AutomaticControlDependencies
+  else:
+    control_manager = ops.NullContextmanager
+  with func_graph.as_default(), control_manager() as a:
     variable_scope.get_variable_scope().set_use_resource(True)
 
     if signature is not None:
@@ -905,7 +935,8 @@ def func_graph_from_py_func(name,
             "must return zero or more Tensors; in compilation of %s, found "
             "return value of type %s, which is not a Tensor." %
             (str(python_func), type(x)))
-      x = a.mark_as_return(x)
+      if add_control_dependencies:
+        x = a.mark_as_return(x)
       return x
 
     this_tape = tape.push_new_tape()
@@ -914,30 +945,12 @@ def func_graph_from_py_func(name,
         func_outputs = autograph.converted_call(
             python_func,
             autograph.ConversionOptions(
-                verbose=True,
-                recursive=True,
-                force_conversion=False,
-                strip_decorators=(defun,),
-                arg_types={}), *func_args, **func_kwargs)
+                verbose=True, recursive=True, strip_decorators=(defun,)),
+            *func_args, **func_kwargs)
       else:
         func_outputs = python_func(*func_args, **func_kwargs)
       # invariant: `func_outputs` contains only Tensors and `None`s.
       func_outputs = nest.map_structure(convert, func_outputs)
-
-      def check_mutation(n1, n2):
-        """Check if two list of arguments are exactly the same."""
-        errmsg = ("Function to be traced should not modify structure of input "
-                  "arguments. Check if your function has list and dictionary "
-                  "operations that alter input arguments, "
-                  "such as `list.pop`, `list.append`")
-        try:
-          nest.assert_same_structure(n1, n2)
-        except ValueError:
-          raise ValueError(errmsg)
-
-        for arg1, arg2 in zip(nest.flatten(n1), nest.flatten(n2)):
-          if arg1 is not arg2:
-            raise ValueError(errmsg)
 
       check_mutation(func_args_before, func_args)
       check_mutation(func_kwargs_before, func_kwargs)
@@ -1136,17 +1149,34 @@ class PolymorphicFunction(object):
       executing_eagerly = ctx.executing_eagerly()
       execution_context = executing_eagerly or ops.get_default_graph()
 
+    # pylint: disable=protected-access
+    default_graph = ops.get_default_graph()
+    # TODO(b/117617952): The current distribution strategy will affect graph
+    # building (e.g. accessing different variables from different devices) and
+    # so requires retracing for each device.
+    uses_distribution_strategy = bool(
+        default_graph._distribution_strategy_stack)
     if executing_eagerly:
-      device_functions = (pydev.merge_device(ctx.device_name),)
       colocation_stack = ()
+      uses_xla = ctx.device_spec.device_type == "TPU"
+      if uses_distribution_strategy or uses_xla:
+        device_functions = (pydev.merge_device(ctx.device_name),)
+      else:
+        device_functions = ()
     else:
-      default_graph = ops.get_default_graph()
-      # Putting the device in the cache key ensures that call-site device
-      # annotations are respected.
-      device_functions = tuple(default_graph._device_functions_outer_to_inner)  # pylint: disable=protected-access
-      colocation_stack = tuple(default_graph._colocation_stack.peek_objs())  # pylint: disable=protected-access
-
-    return (cache_key, execution_context, device_functions, colocation_stack)
+      colocation_stack = tuple(default_graph._colocation_stack.peek_objs())
+      uses_xla = getattr(default_graph, "_xla_compile", False)
+      if (uses_distribution_strategy
+          or uses_xla
+          or _device_stack_has_callable(default_graph._device_function_stack)):
+        # Putting the device in the cache key ensures that call-site device
+        # annotations are respected.
+        device_functions = tuple(default_graph._device_functions_outer_to_inner)
+      else:
+        device_functions = ()
+    # pylint: enable=protected-access
+    return (cache_key, execution_context, device_functions, colocation_stack,
+            uses_xla)
 
   def _canonicalize_function_inputs(self, *args, **kwargs):
     """Canonicalizes `args` and `kwargs`.
@@ -1890,7 +1920,7 @@ class AutomaticControlDependencies(object):
     # this.
     for op in new_operations:
       # TODO(apassos) make this code safely support while loops.
-      if isinstance(op._control_flow_context, control_flow_ops.WhileContext):  # pylint: disable=protected-access
+      if control_flow_util.IsInWhileLoop(op):
         continue
       control_inputs = set()
       # Ensure stateful ops run

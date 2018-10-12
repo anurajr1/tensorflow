@@ -297,6 +297,28 @@ cc_test(
 )
 
 cc_library(
+    name = "init_tensorflow",
+    srcs = [
+        "init_tensorflow.cc",
+    ],
+    hdrs = [
+        "init_tensorflow.h",
+    ],
+    visibility = [
+        "//tensorflow/contrib/lite/java/src/main/native:__subpackages__",
+        "//tensorflow/contrib/lite/testing:__subpackages__",
+    ],
+    deps = select({
+        "//conditions:default": [
+            "//tensorflow/core:lib",
+        ],
+        "//tensorflow:android": [
+            "//tensorflow/core:android_tensorflow_lib",
+        ],
+    }),
+)
+
+cc_library(
     name = "tflite_diff_util",
     srcs = ["tflite_diff_util.cc"],
     hdrs = ["tflite_diff_util.h"],
@@ -348,6 +370,7 @@ tf_cc_test(
         "tflite_not_portable",
     ],
     deps = [
+        ":init_tensorflow",
         ":tflite_diff_flags",
         ":tflite_diff_util",
     ],
@@ -357,6 +380,7 @@ cc_binary(
     name = "tflite_diff",
     srcs = ["tflite_diff_example_test.cc"],
     deps = [
+        ":init_tensorflow",
         ":tflite_diff_flags",
         ":tflite_diff_util",
     ],

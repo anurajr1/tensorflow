@@ -34,6 +34,7 @@ from tensorflow.python.framework import constant_op
 from tensorflow.python.framework import dtypes
 from tensorflow.python.framework import function
 from tensorflow.python.framework import ops
+from tensorflow.python.framework import random_seed as core_random_seed
 from tensorflow.python.framework import smart_cond
 from tensorflow.python.framework import sparse_tensor as sparse_tensor_lib
 from tensorflow.python.framework import tensor_shape
@@ -98,6 +99,16 @@ class Dataset(object):
         return options
     return Options()
 
+  def _apply_options(self):
+    dataset = self
+    options = self.options()
+    static_optimizations = options._static_optimizations()  # pylint: disable=protected-access
+    if static_optimizations:
+      dataset = _OptimizeDataset(dataset, static_optimizations)
+    if options.experimental_autotune:
+      dataset = _ModelDataset(dataset)
+    return dataset
+
   def make_initializable_iterator(self, shared_name=None):
     """Creates an `Iterator` for enumerating the elements of this dataset.
 
@@ -126,13 +137,7 @@ class Dataset(object):
       raise RuntimeError(
           "dataset.make_initializable_iterator is not supported when eager "
           "execution is enabled.")
-    dataset = self
-    options = self.options()
-    static_optimizations = options._static_optimizations()  # pylint: disable=protected-access
-    if static_optimizations:
-      dataset = _OptimizeDataset(dataset, static_optimizations)
-    if options.experimental_autotune:
-      dataset = _ModelDataset(dataset)
+    dataset = self._apply_options()
     if shared_name is None:
       shared_name = ""
     if compat.forward_compatible(2018, 8, 3):
@@ -162,7 +167,8 @@ class Dataset(object):
       RuntimeError: If eager execution is not enabled.
     """
     if context.executing_eagerly():
-      return iterator_ops.EagerIterator(self)
+      dataset = self._apply_options()
+      return iterator_ops.EagerIterator(dataset)
     else:
       raise RuntimeError("dataset.__iter__() is only supported when eager "
                          "execution is enabled.")
@@ -178,17 +184,22 @@ class Dataset(object):
     """
     if context.executing_eagerly():
       return iterator_ops.EagerIterator(self)
+
+    graph_level_seed, op_level_seed = core_random_seed.get_seed(None)
+
     # NOTE(mrry): We capture by value here to ensure that `_make_dataset()` is
     # a 0-argument function.
     @function.Defun(capture_by_value=True)
     def _make_dataset():
-      dataset = self
-      options = self.options()
-      static_optimizations = options._static_optimizations()  # pylint: disable=protected-access
-      if static_optimizations:
-        dataset = _OptimizeDataset(dataset, static_optimizations)
-      if options.experimental_autotune:
-        dataset = _ModelDataset(dataset)
+      # NOTE(mrry): `Defun` does not capture the graph-level seed from the
+      # enclosing graph, so if a graph-level seed is present we set the local
+      # graph seed based on a combination of the graph- and op-level seeds.
+      if graph_level_seed is not None:
+        assert op_level_seed is not None
+        core_random_seed.set_random_seed(
+            (graph_level_seed + 87654321 * op_level_seed) % (2 ** 63 - 1))
+
+      dataset = self._apply_options()
       return dataset._as_variant_tensor()  # pylint: disable=protected-access
 
     try:
@@ -2265,6 +2276,7 @@ class ShuffleDataset(UnaryDataset):
     self._buffer_size = ops.convert_to_tensor(
         buffer_size, dtype=dtypes.int64, name="buffer_size")
     self._seed, self._seed2 = random_seed.get_seed(seed)
+
     if reshuffle_each_iteration is None:
       self._reshuffle_each_iteration = True
     else:

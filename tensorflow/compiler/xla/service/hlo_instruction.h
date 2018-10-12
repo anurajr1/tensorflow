@@ -28,11 +28,10 @@ limitations under the License.
 #include <set>
 #include <string>
 #include <tuple>
-#include <unordered_map>
-#include <unordered_set>
 #include <vector>
 
 #include "absl/container/flat_hash_map.h"
+#include "absl/container/flat_hash_set.h"
 #include "absl/container/inlined_vector.h"
 #include "absl/memory/memory.h"
 #include "absl/strings/str_cat.h"
@@ -464,7 +463,7 @@ class HloInstruction {
   // the same all_reduce_id, they will be 'Allreduce'd. If empty, Allreduce will
   // not be applied cross modules.
   //
-  // TODO(b/79737069): Rename this to AllReduce.
+  // TODO(b/117564385): Rename this to AllReduce.
   static std::unique_ptr<HloInstruction> CreateCrossReplicaSum(
       const Shape& shape, absl::Span<HloInstruction* const> operands,
       HloComputation* reduce_computation,
@@ -1645,7 +1644,7 @@ class HloInstruction {
   // members. The set enables fast membership testing and the vector enables
   // fast, stable iteration.
   std::vector<HloInstruction*> users_;
-  std::unordered_set<const HloInstruction*> user_set_;
+  absl::flat_hash_set<const HloInstruction*> user_set_;
 
   // The set of control successors of this instruction.
   std::vector<HloInstruction*> control_successors_;

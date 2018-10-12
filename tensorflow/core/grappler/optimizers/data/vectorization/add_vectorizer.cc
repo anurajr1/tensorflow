@@ -16,8 +16,8 @@ limitations under the License.
 #include "tensorflow/cc/framework/ops.h"
 #include "tensorflow/cc/framework/scope_internal.h"
 #include "tensorflow/cc/ops/array_ops.h"
+#include "tensorflow/cc/ops/const_op.h"
 #include "tensorflow/cc/ops/math_ops.h"
-#include "tensorflow/cc/ops/standard_ops.h"
 #include "tensorflow/core/graph/node_builder.h"
 #include "tensorflow/core/grappler/optimizers/data/vectorization/vectorizer_registry.h"
 

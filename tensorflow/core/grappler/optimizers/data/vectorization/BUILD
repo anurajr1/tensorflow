@@ -13,7 +13,9 @@ VECTORIZER_DEPS = [
     "//tensorflow/core/grappler/optimizers/data:graph_utils",
     "//tensorflow/core:core_cpu",
     "//tensorflow/cc:scope_internal",
-    "//tensorflow/cc:cc_ops",
+    "//tensorflow/cc:math_ops",
+    "//tensorflow/cc:array_ops",
+    "//tensorflow/cc:const_op",
 ] + tf_protos_all()
 
 cc_library(
@@ -59,7 +61,9 @@ tf_cc_test(
 
 cc_library(
     name = "add_vectorizer",
-    srcs = ["add_vectorizer.cc"],
+    srcs = [
+        "add_vectorizer.cc",
+    ],
     deps = VECTORIZER_DEPS,
     alwayslink = 1,
 )
@@ -67,6 +71,13 @@ cc_library(
 cc_library(
     name = "cast_vectorizer",
     srcs = ["cast_vectorizer.cc"],
+    deps = VECTORIZER_DEPS,
+    alwayslink = 1,
+)
+
+cc_library(
+    name = "reshape_vectorizer",
+    srcs = ["reshape_vectorizer.cc"],
     deps = VECTORIZER_DEPS,
     alwayslink = 1,
 )
@@ -85,6 +96,7 @@ cc_library(
     deps = [
         ":add_vectorizer",
         ":cast_vectorizer",
+        ":reshape_vectorizer",
         ":unpack_vectorizer",
         ":vectorizer",
         ":vectorizer_registry",
