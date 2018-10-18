@@ -309,16 +309,16 @@ class CallTreeTransformer(converter.Base):
       else:
         target_fqn = None
 
-      if inspect_utils.isbuiltin(target_entity):
-        # Note: Any builtin that passed the builtins converter is assumed to be
-        # safe for graph mode.
-        return node
-      elif self._function_is_compilable(target_entity):
+      if self._function_is_compilable(target_entity):
         node = self._rename_compilable_function(node)
       elif target_fqn and target_fqn in KNOWN_NUMPY_FUNCTIONS:
         # TODO(mdan): Should we replace these with equivalent TF ops instead?
         node = self._wrap_to_py_func_single_return(
             node, KNOWN_NUMPY_FUNCTIONS[target_fqn].dtype)
+      elif inspect_utils.isbuiltin(target_entity):
+        # Note: Any builtin that passed the builtins converter is assumed to be
+        # safe for graph mode.
+        return node
       else:
         raise NotImplementedError(
             'py_func with return values (unknown function)')

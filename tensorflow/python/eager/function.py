@@ -24,6 +24,7 @@ import functools
 import re
 import sys
 import threading
+import types as types_lib
 import weakref
 
 import numpy as np
@@ -853,14 +854,56 @@ class Function(object):
     return ret
 
 
-def _get_defun_inputs_from_args(args):
-  """Maps python function args to graph-construction inputs."""
-  function_inputs = [
-      graph_placeholder(arg.dtype, arg.shape)
-      if isinstance(arg, (ops.Tensor, tensor_spec.TensorSpec))
-      else arg for arg in nest.flatten(args)
-  ]
-  return nest.pack_sequence_as(args, function_inputs)
+def _get_defun_inputs(flat_args, names, structure):
+  """Maps python function args to graph-construction inputs.
+
+  Args:
+    flat_args: A flat list of user-specified arguments.
+    names: A list of strings with user-specified argument names, same length as
+      `flat_args`. May be `None`, in which case a generic name is used.
+    structure: The original argument list or dictionary.
+
+  Returns:
+    Placeholders with the same structure as `structure`.
+  """
+  function_inputs = []
+  if names is None:
+    names = [None] * len(flat_args)
+  for arg_value, name in zip(flat_args, names):
+    for arg in nest.flatten(arg_value):
+      if isinstance(arg, (ops.Tensor, tensor_spec.TensorSpec)):
+        if isinstance(arg, tensor_spec.TensorSpec) and arg.name:
+          requested_name = arg.name
+        else:
+          requested_name = name
+        placeholder = graph_placeholder(
+            arg.dtype, arg.shape,
+            name=requested_name)
+        if name is not None:
+          # Record the requested/user-specified name in case it's different than
+          # the uniquified name, for validation when exporting signatures.
+          placeholder.op._set_attr(  # pylint: disable=protected-access
+              "_user_specified_name",
+              attr_value_pb2.AttrValue(s=compat.as_bytes(requested_name)))
+        function_inputs.append(placeholder)
+      else:
+        function_inputs.append(arg)
+  return nest.pack_sequence_as(structure, function_inputs)
+
+
+def _get_defun_inputs_from_kwargs(kwargs):
+  """Maps Python function keyword args to graph-construction inputs."""
+  if kwargs:
+    names, flat_args = zip(*sorted(kwargs.items()))
+  else:
+    names = []
+    flat_args = []
+  return _get_defun_inputs(flat_args, names, structure=kwargs)
+
+
+def _get_defun_inputs_from_args(args, names):
+  """Maps Python function positional args to graph-construction inputs."""
+  return _get_defun_inputs(args, names, structure=args)
 
 
 def check_mutation(n1, n2):
@@ -886,7 +929,8 @@ def func_graph_from_py_func(name,
                             signature=None,
                             func_graph=None,
                             experimental_autograph=False,
-                            add_control_dependencies=True):
+                            add_control_dependencies=True,
+                            arg_names=None):
   """Returns a `FuncGraph` generated from `python_func`.
 
   Args:
@@ -908,6 +952,8 @@ def func_graph_from_py_func(name,
     add_control_dependencies: If True, automatically adds control dependencies
       to ensure program order matches execution order and stateful ops always
       execute.
+    arg_names: Optional list of argument names, used to give input placeholders
+      recognizable names.
 
   Returns:
     A FuncGraph.
@@ -924,14 +970,16 @@ def func_graph_from_py_func(name,
   else:
     control_manager = ops.NullContextmanager
   with func_graph.as_default(), control_manager() as a:
-    variable_scope.get_variable_scope().set_use_resource(True)
+    current_scope = variable_scope.get_variable_scope()
+    default_use_recource = current_scope.use_resource
+    current_scope.set_use_resource(True)
 
     if signature is not None:
       args = signature
       kwargs = {}
 
-    func_args = _get_defun_inputs_from_args(args)
-    func_kwargs = _get_defun_inputs_from_args(kwargs)
+    func_args = _get_defun_inputs_from_args(args, arg_names)
+    func_kwargs = _get_defun_inputs_from_kwargs(kwargs)
 
     # Note: `nest.flatten` sorts by keys, as does `_deterministic_dict_values`.
     # Variables to help check whether mutation happens in calling the function
@@ -976,6 +1024,7 @@ def func_graph_from_py_func(name,
       check_mutation(func_kwargs_before, func_kwargs)
     finally:
       tape.pop_tape(this_tape)
+      current_scope.set_use_resource(default_use_recource)
 
     # Variables in `func_args`, `func_kwargs` should be explicit inputs
     # to the function, not captured inputs.
@@ -1077,6 +1126,10 @@ class PolymorphicFunction(object):
     self._function_attributes = attributes or {}
 
     self._lock = threading.Lock()
+    # _descriptor_cache is a of instance of a class to an instance-specific
+    # PolymorphicFunction, used to make sure defun-decorated methods create
+    # different functions for each instance.
+    self._descriptor_cache = weakref.WeakKeyDictionary()
 
     fullargspec = tf_inspect.getfullargspec(self._python_function)
     if tf_inspect.ismethod(self._python_function):
@@ -1088,6 +1141,8 @@ class PolymorphicFunction(object):
     # A cache mapping from argument name to index, for canonicalizing
     # arguments that are called in a keyword-like fashion.
     self._args_to_indices = {arg: i for i, arg in enumerate(args)}
+    self._arg_names = args
+    self._vararg_name = fullargspec.varargs
     # A cache mapping from arg index to default value, for canonicalization.
     offset = len(args) - len(fullargspec.defaults or [])
     self._arg_indices_to_default_values = {
@@ -1151,8 +1206,25 @@ class PolymorphicFunction(object):
     #   foo = Foo()
     #   foo.bar()  # `foo.bar` is a `PolymorphicFunction` instance
     #
-    # then `instance` will be `foo` (and `owner` will be `Foo`).
-    return functools.partial(self.__call__, instance)
+    # then `instance` will be `foo` (and `owner` will be `Foo`).  We create a
+    # new instance of PolymorphicFunction here to allow different instances each
+    # to create variables once, thereby allowing methods to be decorated with
+    # defun. Keeps a cache to avoid retracing the function every time the
+    # descriptor is accessed.
+    if instance not in self._descriptor_cache:
+      if instance is None:
+        return self
+      # If there is no instance-specific polymorphic func in the cache,
+      # we construct an instance-specific polymorphic function
+      # that uses a weak reference to the instance (so that the instance will
+      # be correctly gc'd).
+
+      # And finally add the wrapped function to the description cache
+      self._descriptor_cache[instance] = class_method_to_instance_method(
+          self, instance)
+
+    # Return the cached polymorphic function for the instance
+    return self._descriptor_cache[instance]
 
   def _cache_key(self, args, kwargs):
     """Computes the cache key given inputs and execution context."""
@@ -1274,14 +1346,11 @@ class PolymorphicFunction(object):
       except (ValueError, TypeError):
         raise ValueError("Structure of Python function inputs does not match "
                          "input_signature.")
-      if any(not isinstance(arg, ops.Tensor) for arg in flat_inputs):
+      if any(not pywrap_tensorflow.IsTensor(arg) for arg in flat_inputs):
         raise ValueError("When input_signature is provided, all inputs to "
                          "the Python function must be Tensors.")
-      tensor_specs = [
-          tensor_spec.TensorSpec.from_tensor(tensor) for tensor in flat_inputs
-      ]
       if any(not spec.is_compatible_with(other)
-             for spec, other in zip(self._flat_input_signature, tensor_specs)):
+             for spec, other in zip(self._flat_input_signature, flat_inputs)):
         raise ValueError("Python inputs incompatible with input_signature: "
                          "inputs (%s), input_signature (%s)" %
                          (str(inputs), str(self._input_signature)))
@@ -1316,6 +1385,13 @@ class PolymorphicFunction(object):
                         "must be hashable.")
 
       if graph_function is None:
+        if self._input_signature is None:
+          arglen = len(args)
+        else:
+          arglen = len(self._input_signature)
+        arg_names = (
+            self._arg_names[:arglen]
+            + [self._vararg_name] * (arglen - len(self._arg_names)))
         graph_function = Function(
             func_graph_from_py_func(
                 self._name,
@@ -1323,7 +1399,8 @@ class PolymorphicFunction(object):
                 args,
                 kwargs,
                 self._input_signature,
-                experimental_autograph=self._experimental_autograph),
+                experimental_autograph=self._experimental_autograph,
+                arg_names=arg_names),
             self._function_attributes)
         self._function_cache[cache_key] = graph_function
       return graph_function, [
@@ -1380,7 +1457,7 @@ def register(func, *args, **kwargs):
   return concrete_func
 
 
-def _validate_signature(signature):
+def validate_signature(signature):
   if any(not isinstance(arg, tensor_spec.TensorSpec)
          for arg in nest.flatten(signature)):
     raise TypeError("Invalid input_signature %s; input_signature must be "
@@ -1742,7 +1819,7 @@ def defun_with_attributes(func=None,
     graph.
   """
   if input_signature is not None:
-    _validate_signature(input_signature)
+    validate_signature(input_signature)
 
   # TODO(apassos): deal with captured global state. Deal with control flow.
   def decorated(function):
@@ -1993,6 +2070,31 @@ class AutomaticControlDependencies(object):
         r.op._add_control_inputs(  # pylint: disable=protected-access
             [o for o in ops_which_must_run
              if o._control_flow_context is r.op._control_flow_context])  # pylint: disable=protected-access
+
+
+def class_method_to_instance_method(original_function, instance):
+  """Constructs a new PolymorphicFunction with `self` bound."""
+  def make_partial_py_func(py_func, weak_instance):
+    return lambda *args, **kwargs: py_func(weak_instance(), *args, **kwargs)
+  weak_instance = weakref.ref(instance)
+
+  # pylint: disable=protected-access
+  # We make a dummy MethodType object to generate the correct bound method
+  # signature. The actual call is to a function with a weak reference to
+  # `instance`.
+  instance_func = type(original_function)(
+      tf_decorator.make_decorator(
+          types_lib.MethodType(original_function.python_function, False),
+          make_partial_py_func(original_function.python_function,
+                               weak_instance)),
+      name=original_function._name,
+      input_signature=original_function._input_signature)
+  # pylint: enable=protected-access
+
+  # And we wrap the function with tf_decorator so inspection works correctly
+  wrapped_instance_func = tf_decorator.make_decorator(
+      original_function.python_function, instance_func)
+  return wrapped_instance_func
 
 
 def automatic_control_dependencies(f):

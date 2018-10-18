@@ -148,9 +148,11 @@ cuda_py_test(
     additional_deps = [
         ":backprop",
         ":context",
+        ":def_function",
         ":function",
         ":tape",
         ":test",
+        "@absl_py//absl/testing:parameterized",
         "//tensorflow/python:test_ops",
         "//tensorflow/python:clip_ops",
         "//tensorflow/python:init_ops",
@@ -421,6 +423,7 @@ py_library(
     name = "wrap_function",
     srcs = ["wrap_function.py"],
     srcs_version = "PY2AND3",
+    visibility = ["//tensorflow:internal"],
     deps = [
         ":context",
         ":function",

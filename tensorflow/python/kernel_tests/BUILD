@@ -607,7 +607,7 @@ tf_py_test(
 
 tf_py_test(
     name = "matrix_exponential_op_test",
-    size = "small",
+    size = "medium",
     srcs = ["matrix_exponential_op_test.py"],
     additional_deps = [
         "//third_party/py/numpy",
@@ -1172,6 +1172,7 @@ tf_py_test(
         "//tensorflow/python:variables",
         "//tensorflow/python/eager:context",
         "//tensorflow/python/eager:function",
+        "//tensorflow/python/eager:wrap_function",
     ],
     tags = ["no_windows"],
 )
@@ -1490,6 +1491,7 @@ cuda_py_test(
         "//tensorflow/python:array_ops_gen",
         "//tensorflow/python:client",
         "//tensorflow/python:client_testlib",
+        "//tensorflow/python:cond_v2",
         "//tensorflow/python:control_flow_ops",
         "//tensorflow/python:data_flow_ops",
         "//tensorflow/python:data_flow_ops_gen",
