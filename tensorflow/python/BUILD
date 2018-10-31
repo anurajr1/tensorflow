@@ -2036,6 +2036,8 @@ py_library(
     ],
 )
 
+# Note: targets depending on this should also depend on ":cond_v2" and ":while_v2".
+# See b/118513001.
 py_library(
     name = "control_flow_ops",
     srcs = ["ops/control_flow_ops.py"],
@@ -3221,6 +3223,7 @@ cuda_py_test(
         ":variable_scope",
         "//third_party/py/numpy",
     ],
+    tags = ["no_oss"],  # b/118709825
 )
 
 cuda_py_test(
