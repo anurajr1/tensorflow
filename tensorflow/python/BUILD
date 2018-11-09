@@ -83,6 +83,7 @@ py_library(
         "//tensorflow/python/tools:__pkg__",
         "//tensorflow/python/tools/api/generator:__pkg__",
         "//tensorflow/tools/api/tests:__pkg__",
+        "//tensorflow/tools/compatibility/update:__pkg__",
     ],
     deps = [
         ":array_ops",
@@ -1538,6 +1539,7 @@ py_test(
         "//tensorflow/core:protos_all_py",
         "//tensorflow/python/eager:context",
         "//third_party/py/numpy",
+        "@absl_py//absl/testing:parameterized",
     ],
 )
 
@@ -2135,6 +2137,7 @@ py_library(
         ":list_ops",
         ":tensor_array_ops",
         ":tensor_shape",
+        ":tensor_util",
         ":util",
         "//tensorflow/core:protos_all_py",
         "//tensorflow/python/eager:function",

@@ -50,8 +50,8 @@ from tensorflow.python.util.tf_export import tf_export
 # Aliases for some automatically-generated names.
 linspace = gen_math_ops.lin_space
 
-arg_max = deprecation.deprecated(None, "Use `argmax` instead")(arg_max)  # pylint: disable=used-before-assignment
-arg_min = deprecation.deprecated(None, "Use `argmin` instead")(arg_min)  # pylint: disable=used-before-assignment
+arg_max = deprecation.deprecated(None, "Use `tf.math.argmax` instead")(arg_max)  # pylint: disable=used-before-assignment
+arg_min = deprecation.deprecated(None, "Use `tf.math.argmin` instead")(arg_min)  # pylint: disable=used-before-assignment
 tf_export("arg_max")(arg_max)
 tf_export("arg_min")(arg_min)
 
@@ -1493,6 +1493,100 @@ def reduce_mean(input_tensor,
                                                   reduction_indices),
                                    keepdims,
                                    name=name))
+
+
+@tf_export("math.reduce_variance")
+def reduce_variance(input_tensor, axis=None, keepdims=None, name=None):
+  """Computes the variance of elements across dimensions of a tensor.
+
+  Reduces `input_tensor` along the dimensions given in `axis`.
+  Unless `keepdims` is true, the rank of the tensor is reduced by 1 for each
+  entry in `axis`. If `keepdims` is true, the reduced dimensions
+  are retained with length 1.
+
+  If `axis` is None, all dimensions are reduced, and a
+  tensor with a single element is returned.
+
+  For example:
+
+  ```python
+  x = tf.constant([[1., 2.], [3., 4.]])
+  tf.reduce_variance(x)  # 1.25
+  tf.reduce_variance(x, 0)  # [1., 1.]
+  tf.reduce_variance(x, 1)  # [0.25,  0.25]
+  ```
+
+  Args:
+    input_tensor: The tensor to reduce. Should have numeric type.
+    axis: The dimensions to reduce. If `None` (the default), reduces all
+      dimensions. Must be in the range `[-rank(input_tensor),
+      rank(input_tensor))`.
+    keepdims: If true, retains reduced dimensions with length 1.
+    name: A name scope for the associated operations (optional).
+
+  Returns:
+    The reduced tensor, of the same dtype as the input_tensor.
+
+  @compatibility(numpy)
+  Equivalent to np.var
+
+  Please note that `np.var` has a `dtype` parameter that could be used to
+  specify the output type. By default this is `dtype=float64`. On the other
+  hand, `tf.reduce_variance` has an aggressive type inference from
+  `input_tensor`,
+  @end_compatibility
+  """
+  name = name if name else "reduce_variance"
+  with ops.name_scope(name):
+    means = reduce_mean(input_tensor, axis=axis, keepdims=True)
+    squared_deviations = square(input_tensor - means)
+    return reduce_mean(squared_deviations, axis=axis, keepdims=keepdims)
+
+
+@tf_export("math.reduce_std")
+def reduce_std(input_tensor, axis=None, keepdims=None, name=None):
+  """Computes the standard deviation of elements across dimensions of a tensor.
+
+  Reduces `input_tensor` along the dimensions given in `axis`.
+  Unless `keepdims` is true, the rank of the tensor is reduced by 1 for each
+  entry in `axis`. If `keepdims` is true, the reduced dimensions
+  are retained with length 1.
+
+  If `axis` is None, all dimensions are reduced, and a
+  tensor with a single element is returned.
+
+  For example:
+
+  ```python
+  x = tf.constant([[1., 2.], [3., 4.]])
+  tf.reduce_std(x)  # 1.1180339887498949
+  tf.reduce_std(x, 0)  # [1., 1.]
+  tf.reduce_std(x, 1)  # [0.5,  0.5]
+  ```
+
+  Args:
+    input_tensor: The tensor to reduce. Should have numeric type.
+    axis: The dimensions to reduce. If `None` (the default), reduces all
+      dimensions. Must be in the range `[-rank(input_tensor),
+      rank(input_tensor))`.
+    keepdims: If true, retains reduced dimensions with length 1.
+    name: A name scope for the associated operations (optional).
+
+  Returns:
+    The reduced tensor, of the same dtype as the input_tensor.
+
+  @compatibility(numpy)
+  Equivalent to np.std
+
+  Please note that `np.std` has a `dtype` parameter that could be used to
+  specify the output type. By default this is `dtype=float64`. On the other
+  hand, `tf.reduce_std` has an aggressive type inference from `input_tensor`,
+  @end_compatibility
+  """
+  name = name if name else "reduce_std"
+  with ops.name_scope(name):
+    variance = reduce_variance(input_tensor, axis=axis, keepdims=keepdims)
+    return sqrt(variance)
 
 
 @tf_export("math.reduce_prod", "reduce_prod")
