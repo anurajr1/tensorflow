@@ -115,9 +115,7 @@ class OneDeviceStrategy(distribute_lib.DistributionStrategy):
     ctx._set_last_step_outputs(last_step_tensor_outputs_dict)  # pylint: disable=protected-access
     return ctx
 
-  def _call_for_each_replica(self, fn, *args, **kwargs):
-    # We don't run `fn` in multiple threads in OneDeviceStrategy.
-    kwargs.pop("run_concurrently", None)
+  def _call_for_each_replica(self, fn, args, kwargs):
     with ops.device(self._device), _OneDeviceReplicaContext(self):
       return fn(*args, **kwargs)
 
@@ -190,6 +188,7 @@ class OneDeviceStrategy(distribute_lib.DistributionStrategy):
 
 
 class _OneDeviceReplicaContext(distribute_lib.ReplicaContext):
+  """ReplicaContext for OneDeviceStrategy."""
 
   def __init__(self, distribution_strategy):
     distribute_lib.ReplicaContext.__init__(
@@ -197,4 +196,8 @@ class _OneDeviceReplicaContext(distribute_lib.ReplicaContext):
 
   @property
   def device(self):
-    return self._distribution_strategy.worker_devices[0]
+    raise RuntimeError("Use .devices instead")
+
+  @property
+  def devices(self):
+    return [self._distribution_strategy.worker_devices[0]]

@@ -70,7 +70,7 @@ def _set_doc(doc):
 
 
 # pylint: disable=redefined-builtin
-@tf_export("math.argmax", "argmax")
+@tf_export(v1=["math.argmax", "argmax"])
 @deprecation.deprecated_args(None, "Use the `axis` argument instead",
                              "dimension")
 @_set_doc(
@@ -85,10 +85,37 @@ def argmax(input,
       "axis", axis, "dimension", dimension)
   if axis is None:
     axis = 0
+  return argmax_v2(input, axis, output_type, name)
+
+
+@tf_export("math.argmax", "argmax", v1=[])
+def argmax_v2(input,
+              axis=None,
+              output_type=dtypes.int64,
+              name=None):
+  """Returns the index with the largest value across axes of a tensor.
+
+  Note that in case of ties the identity of the return value is not guaranteed.
+
+  Args:
+    input: A `Tensor`. Must be one of the following types: `float32`, `float64`,
+    `int32`, `uint8`, `int16`, `int8`, `complex64`, `int64`, `qint8`, `quint8`,
+    `qint32`, `bfloat16`, `uint16`, `complex128`, `half`, `uint32`, `uint64`.
+    axis: A `Tensor`. Must be one of the following types: `int32`, `int64`.
+      int32 or int64, must be in the range `-rank(input), rank(input))`.
+      Describes which axis of the input Tensor to reduce across. For vectors,
+      use axis = 0.
+    output_type: An optional `tf.DType` from: `tf.int32, tf.int64`.
+      Defaults to `tf.int64`.
+    name: A name for the operation (optional).
+
+  Returns:
+    A `Tensor` of type `output_type`.
+  """
   return gen_math_ops.arg_max(input, axis, name=name, output_type=output_type)
 
 
-@tf_export("math.argmin", "argmin")
+@tf_export(v1=["math.argmin", "argmin"])
 @deprecation.deprecated_args(None, "Use the `axis` argument instead",
                              "dimension")
 @_set_doc(
@@ -103,6 +130,33 @@ def argmin(input,
       "axis", axis, "dimension", dimension)
   if axis is None:
     axis = 0
+  return argmin_v2(input, axis, output_type, name)
+
+
+@tf_export("math.argmin", "argmin", v1=[])
+def argmin_v2(input,
+              axis=None,
+              output_type=dtypes.int64,
+              name=None):
+  """Returns the index with the smallest value across axes of a tensor.
+
+  Note that in case of ties the identity of the return value is not guaranteed.
+
+  Args:
+    input: A `Tensor`. Must be one of the following types: `float32`, `float64`,
+    `int32`, `uint8`, `int16`, `int8`, `complex64`, `int64`, `qint8`, `quint8`,
+    `qint32`, `bfloat16`, `uint16`, `complex128`, `half`, `uint32`, `uint64`.
+    axis: A `Tensor`. Must be one of the following types: `int32`, `int64`.
+      int32 or int64, must be in the range `-rank(input), rank(input))`.
+      Describes which axis of the input Tensor to reduce across. For vectors,
+      use axis = 0.
+    output_type: An optional `tf.DType` from: `tf.int32, tf.int64`.
+      Defaults to `tf.int64`.
+    name: A name for the operation (optional).
+
+  Returns:
+    A `Tensor` of type `output_type`.
+  """
   return gen_math_ops.arg_min(input, axis, name=name, output_type=output_type)
 
 
@@ -713,8 +767,8 @@ def saturate_cast(value, dtype, name=None):
                                        name="max"))
     return cast(value, dtype, name=name)
 
-
-@tf_export("to_float")
+@deprecation.deprecated(date=None, instructions="Use tf.cast instead.")
+@tf_export(v1=["to_float"])
 def to_float(x, name="ToFloat"):
   """Casts a tensor to type `float32`.
 
@@ -732,7 +786,8 @@ def to_float(x, name="ToFloat"):
   return cast(x, dtypes.float32, name=name)
 
 
-@tf_export("to_double")
+@deprecation.deprecated(date=None, instructions="Use tf.cast instead.")
+@tf_export(v1=["to_double"])
 def to_double(x, name="ToDouble"):
   """Casts a tensor to type `float64`.
 
@@ -750,7 +805,8 @@ def to_double(x, name="ToDouble"):
   return cast(x, dtypes.float64, name=name)
 
 
-@tf_export("to_int32")
+@deprecation.deprecated(date=None, instructions="Use tf.cast instead.")
+@tf_export(v1=["to_int32"])
 def to_int32(x, name="ToInt32"):
   """Casts a tensor to type `int32`.
 
@@ -768,7 +824,8 @@ def to_int32(x, name="ToInt32"):
   return cast(x, dtypes.int32, name=name)
 
 
-@tf_export("to_int64")
+@deprecation.deprecated(date=None, instructions="Use tf.cast instead.")
+@tf_export(v1=["to_int64"])
 def to_int64(x, name="ToInt64"):
   """Casts a tensor to type `int64`.
 
@@ -786,7 +843,8 @@ def to_int64(x, name="ToInt64"):
   return cast(x, dtypes.int64, name=name)
 
 
-@tf_export("to_bfloat16")
+@deprecation.deprecated(date=None, instructions="Use tf.cast instead.")
+@tf_export(v1=["to_bfloat16"])
 def to_bfloat16(x, name="ToBFloat16"):
   """Casts a tensor to type `bfloat16`.
 
@@ -804,7 +862,8 @@ def to_bfloat16(x, name="ToBFloat16"):
   return cast(x, dtypes.bfloat16, name=name)
 
 
-@tf_export("to_complex64")
+@deprecation.deprecated(date=None, instructions="Use tf.cast instead.")
+@tf_export(v1=["to_complex64"])
 def to_complex64(x, name="ToComplex64"):
   """Casts a tensor to type `complex64`.
 
@@ -822,7 +881,8 @@ def to_complex64(x, name="ToComplex64"):
   return cast(x, dtypes.complex64, name=name)
 
 
-@tf_export("to_complex128")
+@deprecation.deprecated(date=None, instructions="Use tf.cast instead.")
+@tf_export(v1=["to_complex128"])
 def to_complex128(x, name="ToComplex128"):
   """Casts a tensor to type `complex128`.
 
@@ -2252,7 +2312,7 @@ def matvec(a,
 _OverrideBinaryOperatorHelper(matmul, "matmul")
 
 sparse_matmul = gen_math_ops.sparse_mat_mul
-tf_export("sparse_matmul")(sparse_matmul)
+tf_export(v1=["sparse_matmul"])(sparse_matmul)
 
 
 @ops.RegisterStatistics("MatMul", "flops")

@@ -317,10 +317,9 @@ class TPUStrategy(distribute_lib.DistributionStrategy):
 
     return ctx
 
-  def _call_for_each_replica(self, fn, *args, **kwargs):
+  def _call_for_each_replica(self, fn, args, kwargs):
     # TODO(jhseu): Consider making it so call_for_each_replica implies that
     # we're in a tpu.rewrite(), and update TPUMirroredVariable accordingly.
-    kwargs.pop("run_concurrently", None)
     with _TPUReplicaContext(self):
       return fn(*args, **kwargs)
 
@@ -545,5 +544,9 @@ class _TPUReplicaContext(distribute_lib.ReplicaContext):
 
   @property
   def device(self):
+    raise RuntimeError("Use .devices instead")
+
+  @property
+  def devices(self):
     distribute_lib.require_replica_context(self)
-    return self._distribution_strategy.worker_devices[self._replica_id]
+    return [self._distribution_strategy.worker_devices[self._replica_id]]
