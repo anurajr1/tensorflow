@@ -312,6 +312,10 @@ StatusOr<std::unique_ptr<HloInstruction>> HloInstruction::CreateFromProto(
                                 proto.exponent_bits(), proto.mantissa_bits());
       break;
     case HloOpcode::kInfeed: {
+      TF_RET_CHECK(ShapeUtil::IsTuple(proto.shape()) &&
+                   (ShapeUtil::TupleElementCount(proto.shape()) == 2))
+          << "Infeed should have a tuple shape with 2 operands, but has: "
+          << proto.shape();
       const Shape& data_shape =
           ShapeUtil::GetTupleElementShape(proto.shape(), 0);
       TF_RET_CHECK(proto.operand_ids_size() == 1)
@@ -1896,6 +1900,11 @@ void HloInstruction::set_while_body(HloComputation* computation) {
   called_computations_[kBodyComputationIndex] = computation;
 }
 
+HloInstruction* HloInstruction::while_init() const {
+  CHECK_EQ(HloOpcode::kWhile, opcode_);
+  return operands_[0];
+}
+
 HloComputation* HloInstruction::true_computation() const {
   CHECK_EQ(HloOpcode::kConditional, opcode_);
   return called_computations_[kTrueComputationIndex];
@@ -3237,6 +3246,11 @@ void HloInstruction::set_cross_replica_sum_barrier(const string& barrier) {
 
 absl::optional<int64> HloInstruction::all_reduce_id() const {
   return Cast<HloAllReduceInstruction>(this)->all_reduce_id();
+}
+
+void HloInstruction::set_all_reduce_id(
+    const absl::optional<int64>& all_reduce_id) {
+  return Cast<HloAllReduceInstruction>(this)->set_all_reduce_id(all_reduce_id);
 }
 
 const ConvolutionDimensionNumbers&

@@ -554,21 +554,6 @@ class MirroredStrategy(distribute_lib.DistributionStrategy):
   def _call_for_each_replica(self, fn, args, kwargs):
     return _call_for_each_replica(self, fn, args, kwargs)
 
-  def map(self, map_over, fn, *args, **kwargs):
-    # TODO(josh11b): In eager mode, use one thread per device.
-    index = {}
-    for i, m in enumerate(map_over):
-      d = self._devices[i % len(self._devices)]
-      with ops.device(d):
-        l = index.get(d, [])
-        l.append(fn(m,
-                    *values.select_device_mirrored(d, args),
-                    **values.select_device_mirrored(d, kwargs)))
-        index[d] = l
-    # TODO(josh11b): Need a values.regroup equivalent that handles MapOutput
-    # in addition to PerReplica data.
-    return values.PerReplica({k: values.MapOutput(v) for k, v in index.items()})
-
   def configure(self,
                 session_config=None,
                 cluster_spec=None,
@@ -672,10 +657,6 @@ class MirroredStrategy(distribute_lib.DistributionStrategy):
 
   def value_container(self, val):
     return values.value_container(val)
-
-  @property
-  def num_replicas(self):
-    return len(self._devices)
 
   @property
   def num_replicas_in_sync(self):
@@ -808,7 +789,7 @@ class MirroredReplicaContext(distribute_lib.ReplicaContext):
   `MirroredStrategy.call_for_each_replica()`).
   """
 
-  def _merge_call(self, fn, *args, **kwargs):
+  def _merge_call(self, fn, args, kwargs):
     """Delegate to the main thread to actually perform merge_call()."""
     t = threading.current_thread()  # a _MirroredReplicaThread
     t.merge_fn = fn

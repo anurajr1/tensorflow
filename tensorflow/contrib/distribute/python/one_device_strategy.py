@@ -25,8 +25,6 @@ from tensorflow.python.framework import constant_op
 from tensorflow.python.framework import ops
 from tensorflow.python.ops import array_ops
 from tensorflow.python.ops import control_flow_ops
-from tensorflow.python.ops import math_ops
-from tensorflow.python.ops import variable_scope as vs
 from tensorflow.python.training import distribute as distribute_lib
 from tensorflow.python.util import nest
 
@@ -59,6 +57,11 @@ class OneDeviceStrategy(distribute_lib.DistributionStrategy):
         return next_creator(*args, **kwargs)
     with ops.colocate_with(colocate_with):
       return next_creator(*args, **kwargs)
+
+  def make_dataset_iterator(self, dataset):
+    distributed_dataset = values.PerReplicaDataset(dataset, [self._device])
+    # TODO(priyag): Return distribution strategy specific InputIterator
+    return distributed_dataset.make_initializable_iterator()
 
   def distribute_dataset(self, dataset_fn):
     return values.PerReplicaDataset(
@@ -119,23 +122,9 @@ class OneDeviceStrategy(distribute_lib.DistributionStrategy):
     with ops.device(self._device), _OneDeviceReplicaContext(self):
       return fn(*args, **kwargs)
 
-  def map(self, map_over, fn, *args, **kwargs):
-    with ops.device(self._device):
-      return values.MapOutput([fn(m, *args, **kwargs) for m in map_over])
-
   def _reduce(self, aggregation, value, destinations):
-    del destinations
-    if not isinstance(value, values.MapOutput):
-      return value
-    l = value.get()
-    assert l
-    with ops.device(self._device):
-      if aggregation == vs.VariableAggregation.SUM:
-        return math_ops.add_n(l)
-      elif aggregation == vs.VariableAggregation.MEAN:
-        return math_ops.add_n(l) / len(l)
-      else:
-        assert False
+    del aggregation, destinations
+    return value
 
   def _update(self, var, options, fn, *args, **kwargs):
     # The implementations of _update() and _update_non_slot() are identical
@@ -162,10 +151,6 @@ class OneDeviceStrategy(distribute_lib.DistributionStrategy):
 
   def value_container(self, value):
     return value
-
-  @property
-  def num_replicas(self):
-    return 1
 
   @property
   def num_replicas_in_sync(self):

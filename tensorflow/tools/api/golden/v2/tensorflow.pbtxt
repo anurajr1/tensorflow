@@ -329,10 +329,6 @@ tf_module {
     mtype: "<type \'type\'>"
   }
   member {
-    name: "profiler"
-    mtype: "<type \'module\'>"
-  }
-  member {
     name: "pywrap_tensorflow"
     mtype: "<type \'module\'>"
   }
@@ -649,10 +645,6 @@ tf_module {
     argspec: "args=[\'device_name\'], varargs=None, keywords=None, defaults=None"
   }
   member_method {
-    name: "div"
-    argspec: "args=[\'x\', \'y\', \'name\'], varargs=None, keywords=None, defaults=[\'None\'], "
-  }
-  member_method {
     name: "div_no_nan"
     argspec: "args=[\'x\', \'y\', \'name\'], varargs=None, keywords=None, defaults=[\'None\'], "
   }
@@ -735,6 +727,10 @@ tf_module {
   member_method {
     name: "foldr"
     argspec: "args=[\'fn\', \'elems\', \'initializer\', \'parallel_iterations\', \'back_prop\', \'swap_memory\', \'name\'], varargs=None, keywords=None, defaults=[\'None\', \'10\', \'True\', \'False\', \'None\'], "
+  }
+  member_method {
+    name: "function"
+    argspec: "args=[\'func\', \'input_signature\', \'autograph\', \'experimental_autograph_options\'], varargs=None, keywords=None, defaults=[\'None\', \'None\', \'True\', \'None\'], "
   }
   member_method {
     name: "gather"
@@ -1115,26 +1111,6 @@ tf_module {
   member_method {
     name: "sparse_concat"
     argspec: "args=[\'axis\', \'sp_inputs\', \'name\', \'expand_nonconcat_dim\', \'concat_dim\'], varargs=None, keywords=None, defaults=[\'None\', \'False\', \'None\'], "
-  }
-  member_method {
-    name: "sparse_reduce_max"
-    argspec: "args=[\'sp_input\', \'axis\', \'keepdims\', \'reduction_axes\', \'keep_dims\'], varargs=None, keywords=None, defaults=[\'None\', \'None\', \'None\', \'None\'], "
-  }
-  member_method {
-    name: "sparse_reduce_max_sparse"
-    argspec: "args=[\'sp_input\', \'axis\', \'keepdims\', \'reduction_axes\', \'keep_dims\'], varargs=None, keywords=None, defaults=[\'None\', \'None\', \'None\', \'None\'], "
-  }
-  member_method {
-    name: "sparse_reduce_sum"
-    argspec: "args=[\'sp_input\', \'axis\', \'keepdims\', \'reduction_axes\', \'keep_dims\'], varargs=None, keywords=None, defaults=[\'None\', \'None\', \'None\', \'None\'], "
-  }
-  member_method {
-    name: "sparse_reduce_sum_sparse"
-    argspec: "args=[\'sp_input\', \'axis\', \'keepdims\', \'reduction_axes\', \'keep_dims\'], varargs=None, keywords=None, defaults=[\'None\', \'None\', \'None\', \'None\'], "
-  }
-  member_method {
-    name: "sparse_split"
-    argspec: "args=[\'keyword_required\', \'sp_input\', \'num_split\', \'axis\', \'name\', \'split_dim\'], varargs=None, keywords=None, defaults=[\'KeywordRequired()\', \'None\', \'None\', \'None\', \'None\', \'None\'], "
   }
   member_method {
     name: "sparse_to_dense"

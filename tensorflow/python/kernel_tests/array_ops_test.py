@@ -636,6 +636,7 @@ class StridedSliceTest(test_util.TensorFlowTestCase):
       _ = checker[..., bar:bar2]
       _ = checker[..., bar]
       _ = checker[..., 3]
+      _ = checker[..., 2 ** 64 // 2**63]  # Test longs in Python 2
 
   def testTensorIndexingTypeError(self):
     with self.session(use_gpu=True):
@@ -1097,7 +1098,6 @@ class SequenceMaskTest(test_util.TensorFlowTestCase):
           [[True, False, False, False, False], [True, True, True, False, False],
            [True, True, False, False, False]])
 
-  @test_util.enable_c_shapes
   def testOneDimensionalDtypeWithoutMaxlen(self):
     with self.cached_session():
       # test dtype and default maxlen:
@@ -1108,7 +1108,6 @@ class SequenceMaskTest(test_util.TensorFlowTestCase):
           res.eval(),
           [[0.0, 0.0, 0.0, 0.0], [1.0, 0.0, 0.0, 0.0], [1.0, 1.0, 1.0, 1.0]])
 
-  @test_util.enable_c_shapes
   def testOneDimensionalWithoutMaxlen(self):
     with self.cached_session():
       res = array_ops.sequence_mask(
@@ -1120,7 +1119,6 @@ class SequenceMaskTest(test_util.TensorFlowTestCase):
            [True, False, False, False],
            [True, True, True, True]])
 
-  @test_util.enable_c_shapes
   def testTwoDimensional(self):
     with self.cached_session():
       res = array_ops.sequence_mask(constant_op.constant([[1, 3, 2]]), 5)

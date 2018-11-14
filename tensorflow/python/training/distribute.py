@@ -541,6 +541,30 @@ class DistributionStrategy(object):
           "DistributionStrategy.")
     return result
 
+  def make_dataset_iterator(self, dataset):
+    """Makes an iterator for input provided via input_dataset.
+
+    Data from the given dataset will be distributed evenly across all the
+    compute replicas. We will assume that the input dataset is batched by the
+    global batch size. With this assumption, we will make a best effort to
+    divide each batch across all the replicas (one or more workers).
+    If this effort fails, an error will be thrown, and the user should instead
+    use `make_input_fn_iterator` which provides more control to the user, and
+    does not try to divide a batch across replicas.
+
+    The user could also use `make_input_fn_iterator` if they want to
+    customize which input is fed to which replica/worker etc.
+
+    Args:
+      dataset: `tf.data.Dataset` that will be distributed evenly across all
+        replicas.
+
+    Returns:
+      An `InputIterator` which returns inputs for each step of the computation.
+      User should call `initialize` on the returned iterator.
+    """
+    raise NotImplementedError("must be implemented in descendants")
+
   # TODO(josh11b): `PerReplicaDataset` currently only implements a few methods of
   # Dataset API such as make_one_shot_iterator and make_initializable_iterator.
   # Extend to implement more functionality of datasets.
@@ -687,7 +711,7 @@ class DistributionStrategy(object):
       replica_ctx = tf.get_replica_context()
       v = three + replica_ctx.replica_id
       # Computes the sum of the `v` values across all replicas.
-      s = replica_ctx.merge_call(merge_fn, v)
+      s = replica_ctx.merge_call(merge_fn, args=(v,))
       return s + v
 
     with distribution.scope():
@@ -897,14 +921,6 @@ class DistributionStrategy(object):
     return self._require_static_shapes
 
   @property
-  def num_replicas(self):
-    """Returns number of replicas, for purposes of averaging across replicas.
-
-    DEPRECATED: use `num_replicas_in_sync` instead.
-    """
-    raise NotImplementedError("must be implemented in descendants")
-
-  @property
   def num_replicas_in_sync(self):
     """Returns number of replicas over which gradients are aggregated."""
     raise NotImplementedError("must be implemented in descendants")
@@ -1049,17 +1065,31 @@ class ReplicaContext(object):
       merge_fn: function that joins arguments from threads that are given as
         PerReplica. It accepts `DistributionStrategy` object as the first
         argument.
-      *args: positional per-thread arguments for `merge_fn`
-      **kwargs: keyword per-thread arguments for `merge_fn`.
+      args: List or tuple with positional per-thread arguments for `merge_fn`
+      kwargs: Dict with keyword per-thread arguments for `merge_fn`.
 
     Returns:
       The return value of `merge_fn`, except for `PerReplica` values which are
       unpacked.
     """
     require_replica_context(self)
-    return self._merge_call(merge_fn, *args, **kwargs)
+    # Handle old *args, **kwargs, and new args=(...), kwargs={...}, to
+    # allow transition.
+    a = kwargs.pop("args", None)
+    if a is not None:
+      if args:
+        raise ValueError(
+            "Can't pass *args and args=... to merge_call")
+      args = a
+    k = kwargs.pop("kwargs", None)
+    if k is not None:
+      if kwargs:
+        raise ValueError(
+            "Can't pass **kwargs and kwargs=... to merge_call")
+      kwargs = k
+    return self._merge_call(merge_fn, args, kwargs)
 
-  def _merge_call(self, merge_fn, *args, **kwargs):
+  def _merge_call(self, merge_fn, args, kwargs):
     """Default implementation for single replica."""
     _push_per_thread_mode(  # thread-local, so not needed with multiple threads
         distribution_strategy_context._CrossReplicaThreadMode(  # pylint: disable=protected-access
@@ -1133,6 +1163,9 @@ class _DefaultDistributionStrategy(DistributionStrategy):
     """Does not require `self.scope`."""
     _require_distribution_strategy_scope(self)
     return ops.colocate_with(colocate_with_variable)
+
+  def make_dataset_iterator(self, dataset):
+    return dataset.make_initializable_iterator()
 
   def distribute_dataset(self, dataset_fn):
     return self._call_dataset_fn(dataset_fn)
