@@ -16,7 +16,10 @@ limitations under the License.
 #if GOOGLE_CUDA
 
 #define EIGEN_USE_GPU
+
+#if CUDA_VERSION >= 9000
 #define CUB_USE_COOPERATIVE_GROUPS
+#endif  // CUDA_VERSION >= 9000
 
 #include "third_party/cub/block/block_load.cuh"
 #include "third_party/cub/block/block_scan.cuh"

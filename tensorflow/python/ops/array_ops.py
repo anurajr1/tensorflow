@@ -269,7 +269,13 @@ def broadcast_static_shape(shape_x, shape_y):
   return common_shapes.broadcast_shape(shape_x, shape_y)
 
 
-@tf_export("shape")
+@tf_export("shape", v1=[])
+def shape_v2(input, out_type=dtypes.int32, name=None):
+  # pylint: disable=redefined-builtin
+  return shape(input, name, out_type)
+
+
+@tf_export(v1=["shape"])
 def shape(input, name=None, out_type=dtypes.int32):
   # pylint: disable=redefined-builtin
   """Returns the shape of a tensor.
@@ -342,7 +348,13 @@ def shape_n(input, out_type=dtypes.int32, name=None):
   return gen_array_ops.shape_n(input, out_type=out_type, name=name)
 
 
-@tf_export("size")
+@tf_export("size", v1=[])
+def size_v2(input, out_type=dtypes.int32, name=None):
+  # pylint: disable=redefined-builtin
+  return size(input, name, out_type)
+
+
+@tf_export(v1=["size"])
 def size(input, name=None, out_type=dtypes.int32):
   # pylint: disable=redefined-builtin
   """Returns the size of a tensor.
@@ -1728,8 +1740,8 @@ def zeros(shape, dtype=dtypes.float32, name=None):
   return output
 
 
-@tf_export("zeros_like")
-def zeros_like(tensor, dtype=None, name=None, optimize=True):
+@tf_export(v1=["zeros_like"])
+def zeros_like_v1(tensor, dtype=None, name=None, optimize=True):
   """Creates a tensor with all elements set to zero.
 
   Given a single tensor (`tensor`), this operation returns a tensor of the
@@ -1755,6 +1767,43 @@ def zeros_like(tensor, dtype=None, name=None, optimize=True):
   Returns:
     A `Tensor` with all elements set to zero.
   """
+  zeros_like_impl(tensor, dtype, name, optimize)
+
+
+@tf_export("zeros_like", v1=[])
+def zeros_like_v2(
+    input,  # pylint: disable=redefined-builtin
+    dtype=None,
+    name=None):
+  """Creates a tensor with all elements set to zero.
+
+  Given a single tensor (`tensor`), this operation returns a tensor of the
+  same type and shape as `tensor` with all elements set to zero. Optionally,
+  you can use `dtype` to specify a new type for the returned tensor.
+
+  For example:
+
+  ```python
+  tensor = tf.constant([[1, 2, 3], [4, 5, 6]])
+  tf.zeros_like(tensor)  # [[0, 0, 0], [0, 0, 0]]
+  ```
+
+  Args:
+    input: A `Tensor`.
+    dtype: A type for the returned `Tensor`. Must be `float16`, `float32`,
+      `float64`, `int8`, `uint8`, `int16`, `uint16`, `int32`, `int64`,
+      `complex64`, `complex128`, `bool` or `string`.
+    name: A name for the operation (optional).
+    and encode it as a constant.
+
+  Returns:
+    A `Tensor` with all elements set to zero.
+  """
+  zeros_like_impl(input, dtype, name, optimize=True)
+
+
+def zeros_like_impl(tensor, dtype, name, optimize=True):
+  """Internal implementation for the v1/v2 zeros_like API calls."""
   with ops.name_scope(name, "zeros_like", [tensor]) as name:
     tensor = ops.convert_to_tensor(tensor, name="tensor")
 
@@ -1781,7 +1830,7 @@ def zeros_like(tensor, dtype=None, name=None, optimize=True):
       return gen_array_ops.zeros_like(tensor, name=name)
 
 
-@tf_export("ones_like")
+@tf_export(v1=["ones_like"])
 def ones_like(tensor, dtype=None, name=None, optimize=True):
   """Creates a tensor with all elements set to 1.
 
@@ -1808,6 +1857,43 @@ def ones_like(tensor, dtype=None, name=None, optimize=True):
   Returns:
     A `Tensor` with all elements set to 1.
   """
+  return ones_like_impl(tensor, dtype, name, optimize)
+
+
+@tf_export("ones_like", v1=[])
+def ones_like_v2(
+    input,  # pylint: disable=redefined-builtin
+    dtype=None,
+    name=None):
+  """Creates a tensor with all elements set to zero.
+
+  Given a single tensor (`tensor`), this operation returns a tensor of the
+  same type and shape as `tensor` with all elements set to zero. Optionally,
+  you can use `dtype` to specify a new type for the returned tensor.
+
+  For example:
+
+  ```python
+  tensor = tf.constant([[1, 2, 3], [4, 5, 6]])
+  tf.ones_like(tensor)  # [[1, 1, 1], [1, 1, 1]]
+  ```
+
+  Args:
+    input: A `Tensor`.
+    dtype: A type for the returned `Tensor`. Must be `float16`, `float32`,
+      `float64`, `int8`, `uint8`, `int16`, `uint16`, `int32`, `int64`,
+      `complex64`, `complex128`, `bool` or `string`.
+    name: A name for the operation (optional).
+    and encode it as a constant.
+
+  Returns:
+    A `Tensor` with all elements set to zero.
+  """
+  return ones_like_impl(input, dtype, name, optimize=True)
+
+
+def ones_like_impl(tensor, dtype, name, optimize=True):
+  """Internal implementation for the v1/v2 ones_like API calls."""
   with ops.name_scope(name, "ones_like", [tensor]) as name:
     tensor = ops.convert_to_tensor(tensor, name="tensor")
     ones_shape = shape_internal(tensor, optimize=optimize)
@@ -2993,7 +3079,7 @@ def batch_gather(params, indices, name=None):
 
 # Define quantize_v2 here in order to make name the second-to-last attribute,
 # because round_mode was added later.
-@tf_export("quantize_v2")
+@tf_export(v1=["quantize_v2"])
 @deprecation.deprecated(
     "2017-10-25",
     "`tf.quantize_v2` is deprecated, please use `tf.quantization.quantize` "
@@ -3014,7 +3100,7 @@ def quantize_v2(input,  # pylint: disable=redefined-builtin
                                    round_mode=round_mode)
 
 
-quantize_v2.__doc__ = """Please use `tf.quantize` instead."""
+quantize_v2.__doc__ = """Please use `tf.quantization.quantize` instead."""
 
 
 # We want to expose tf.quantize instead of tf.quantize_v2; we can deprecate

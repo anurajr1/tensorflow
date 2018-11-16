@@ -150,11 +150,11 @@ tf_module {
   }
   member_method {
     name: "fractional_avg_pool"
-    argspec: "args=[\'value\', \'pooling_ratio\', \'pseudo_random\', \'overlapping\', \'deterministic\', \'seed\', \'seed2\', \'name\'], varargs=None, keywords=None, defaults=[\'False\', \'False\', \'False\', \'0\', \'0\', \'None\'], "
+    argspec: "args=[\'value\', \'pooling_ratio\', \'pseudo_random\', \'overlapping\', \'seed\', \'name\'], varargs=None, keywords=None, defaults=[\'False\', \'False\', \'0\', \'None\'], "
   }
   member_method {
     name: "fractional_max_pool"
-    argspec: "args=[\'value\', \'pooling_ratio\', \'pseudo_random\', \'overlapping\', \'deterministic\', \'seed\', \'seed2\', \'name\'], varargs=None, keywords=None, defaults=[\'False\', \'False\', \'False\', \'0\', \'0\', \'None\'], "
+    argspec: "args=[\'value\', \'pooling_ratio\', \'pseudo_random\', \'overlapping\', \'seed\', \'name\'], varargs=None, keywords=None, defaults=[\'False\', \'False\', \'0\', \'None\'], "
   }
   member_method {
     name: "fused_batch_norm"
@@ -266,7 +266,7 @@ tf_module {
   }
   member_method {
     name: "separable_conv2d"
-    argspec: "args=[\'input\', \'depthwise_filter\', \'pointwise_filter\', \'strides\', \'padding\', \'rate\', \'name\', \'data_format\'], varargs=None, keywords=None, defaults=[\'None\', \'None\', \'None\'], "
+    argspec: "args=[\'input\', \'depthwise_filter\', \'pointwise_filter\', \'strides\', \'padding\', \'data_format\', \'dilations\', \'name\'], varargs=None, keywords=None, defaults=[\'None\', \'None\', \'None\'], "
   }
   member_method {
     name: "sigmoid"
@@ -314,7 +314,7 @@ tf_module {
   }
   member_method {
     name: "sufficient_statistics"
-    argspec: "args=[\'x\', \'axes\', \'shift\', \'keep_dims\', \'name\'], varargs=None, keywords=None, defaults=[\'None\', \'False\', \'None\'], "
+    argspec: "args=[\'x\', \'axes\', \'shift\', \'keepdims\', \'name\'], varargs=None, keywords=None, defaults=[\'None\', \'False\', \'None\'], "
   }
   member_method {
     name: "tanh"
@@ -335,10 +335,6 @@ tf_module {
   member_method {
     name: "with_space_to_batch"
     argspec: "args=[\'input\', \'dilation_rate\', \'padding\', \'op\', \'filter_shape\', \'spatial_dims\', \'data_format\'], varargs=None, keywords=None, defaults=[\'None\', \'None\', \'None\'], "
-  }
-  member_method {
-    name: "xw_plus_b"
-    argspec: "args=[\'x\', \'weights\', \'biases\', \'name\'], varargs=None, keywords=None, defaults=[\'None\'], "
   }
   member_method {
     name: "zero_fraction"
