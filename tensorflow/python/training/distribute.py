@@ -25,6 +25,7 @@ import enum
 
 from tensorflow.python.data.ops import dataset_ops
 from tensorflow.python.distribute import reduce_util
+from tensorflow.python.eager import context as eager_context
 from tensorflow.python.framework import constant_op
 from tensorflow.python.framework import dtypes
 from tensorflow.python.framework import ops
@@ -207,7 +208,7 @@ class InputReplicationMode(enum.Enum):
   # many input pipelines as number of workers. Replicas will dequeue from the
   # local Dataset on their worker. Distribution Strategy doesn't manage any
   # state sharing between such separate input pipelines.
-  PER_WORKER = 0
+  PER_WORKER = "PER_WORKER"
 
 
 class InputContext(object):
@@ -983,15 +984,9 @@ class DistributionStrategyExtended(object):
     _require_distribution_strategy_scope_extended(self)
     return variable_scope.variable_creator_scope(create_colocated_variable)
 
-  def _call_dataset_fn(self, dataset_fn, input_context=None):
+  def _call_dataset_fn(self, dataset_fn):
     """Call the `dataset_fn` with `input_context` as argument."""
-    # This method is invoked by both `make_input_fn_iterator` and
-    # `distribute_dataset`. The `dataset_fn` for the former one accepts an
-    # input_context while the latter one doesn't.
-    if input_context:
-      result = dataset_fn(input_context)
-    else:
-      result = dataset_fn()
+    result = dataset_fn()
     if not isinstance(result, dataset_ops.Dataset):
       raise ValueError(
           "dataset_fn() must return a tf.data.Dataset when using a "
@@ -1043,18 +1038,13 @@ class DistributionStrategyExtended(object):
 
     Args:
       fn: function to run using this distribution strategy. The function must
-        have the following signature: `def fn(context, *inputs)`.
+        have the following signature: `def fn(context, inputs)`.
         `context` is an instance of `MultiStepContext` that will be passed when
         `fn` is run. `context` can be used to specify the outputs to be returned
         from `fn` by calling `context.set_last_step_output`. It can also be used
         to capture non tensor outputs by `context.set_non_tensor_output`.
         See `MultiStepContext` documentation for more information.
-        `inputs` will have same type/structure as `iterator.get_next()`. If the
-        `iterator.get_next()` returns a tuple say `return x, y` then whose will
-        be unpacked and passed to the `step_fn`; and step_fn signature would
-        look like `def step_fn(context, x, y)`. If the iterator returns a single
-        value say `return x` then the value is passed as is; the step_fn
-        signature would look like `def step_fn(context, x)`.
+        `inputs` will have same type/structure as `iterator.get_next()`.
         Typically, `fn` will use `call_for_each_replica` method of the strategy
         to distribute the computation over multiple replicas.
       iterator: Iterator of a dataset that represents the input for `fn`. The
@@ -1084,7 +1074,7 @@ class DistributionStrategyExtended(object):
                                           initial_loop_values):
     raise NotImplementedError("must be implemented in descendants")
 
-  def call_for_each_replica(self, fn, args, kwargs):
+  def call_for_each_replica(self, fn, args=(), kwargs=None):
     """Run `fn` once per replica.
 
     `fn` may call `tf.get_replica_context()` to access methods such as
@@ -1128,6 +1118,8 @@ class DistributionStrategyExtended(object):
       Merged return value of `fn` across all replicas.
     """
     _require_cross_replica_context_extended(self)
+    if kwargs is None:
+      kwargs = {}
     return self._call_for_each_replica(fn, args, kwargs)
 
   def _call_for_each_replica(self, fn, args, kwargs):
@@ -1199,7 +1191,7 @@ class DistributionStrategyExtended(object):
         for t, v in value_destination_pairs
     ]
 
-  def update(self, var, fn, args, kwargs, group):
+  def update(self, var, fn, args=(), kwargs=None, group=True):
     """Run `fn` to update `var` using inputs mirrored to the same devices.
 
     If `var` is mirrored across multiple devices, then this implements
@@ -1237,12 +1229,15 @@ class DistributionStrategyExtended(object):
       for ensuring all elements are executed.
     """
     _require_cross_replica_context_extended(self)
+    if kwargs is None:
+      kwargs = {}
     return self._update(var, fn, args, kwargs, group)
 
   def _update(self, var, fn, args, kwargs, group):
     raise NotImplementedError("must be implemented in descendants")
 
-  def update_non_slot(self, colocate_with, fn, args, kwargs, group):
+  def update_non_slot(
+      self, colocate_with, fn, args=(), kwargs=None, group=True):
     """Runs `fn(*args, **kwargs)` on `colocate_with` devices.
 
     Args:
@@ -1257,6 +1252,8 @@ class DistributionStrategyExtended(object):
       Return value of `fn`, possibly merged across devices.
     """
     _require_cross_replica_context_extended(self)
+    if kwargs is None:
+      kwargs = {}
     return self._update_non_slot(colocate_with, fn, args, kwargs, group)
 
   def _update_non_slot(self, colocate_with, fn, args, kwargs, group):
@@ -1394,7 +1391,7 @@ class ReplicaContext(object):
   def __exit__(self, exception_type, exception_value, traceback):
     _pop_per_thread_mode()
 
-  def merge_call(self, merge_fn, *args, **kwargs):
+  def merge_call(self, merge_fn, args=(), kwargs=None):
     """Merge args across replicas and run `merge_fn` in a cross-replica context.
 
     This allows communication and coordination when there are multiple calls
@@ -1423,20 +1420,8 @@ class ReplicaContext(object):
       unpacked.
     """
     require_replica_context(self)
-    # Handle old *args, **kwargs, and new args=(...), kwargs={...}, to
-    # allow transition.
-    a = kwargs.pop("args", None)
-    if a is not None:
-      if args:
-        raise ValueError(
-            "Can't pass *args and args=... to merge_call")
-      args = a
-    k = kwargs.pop("kwargs", None)
-    if k is not None:
-      if kwargs:
-        raise ValueError(
-            "Can't pass **kwargs and kwargs=... to merge_call")
-      kwargs = k
+    if kwargs is None:
+      kwargs = {}
     return self._merge_call(merge_fn, args, kwargs)
 
   def _merge_call(self, merge_fn, args, kwargs):
@@ -1516,12 +1501,12 @@ class _DefaultDistributionExtended(DistributionStrategyExtended):
     return self._call_dataset_fn(dataset_fn)
 
   def _make_dataset_iterator(self, dataset):
-    return dataset.make_initializable_iterator()
+    return _DefaultDistributionExtended.DefaultInputIterator(dataset)
 
   def _make_input_fn_iterator(self,
                               input_fn,
                               replication_mode=InputReplicationMode.PER_WORKER):
-    return self._call_dataset_fn(input_fn, InputContext())
+    return input_fn(InputContext()).make_initializable_iterator()
 
   def _broadcast_to(self, tensor, destinations):
     if destinations is None:
@@ -1580,6 +1565,28 @@ class _DefaultDistributionExtended(DistributionStrategyExtended):
 
   def non_slot_devices(self, var_list):
     return min(var_list, key=lambda x: x.name)
+
+  # TODO(priyag): This should inherit from `InputIterator`, once dependency
+  # issues have been resolved.
+  class DefaultInputIterator(object):
+    """Default implementation of `InputIterator` for default strategy."""
+
+    def __init__(self, dataset):
+      self._dataset = dataset
+      if eager_context.executing_eagerly():
+        self._iterator = dataset.make_one_shot_iterator()
+      else:
+        self._iterator = dataset.make_initializable_iterator()
+
+    def get_next(self):
+      return self._iterator.get_next()
+
+    def initialize(self):
+      if eager_context.executing_eagerly():
+        self._iterator = self._dataset.make_one_shot_iterator()
+        return []
+      else:
+        return [self._iterator.initializer]
 
 
 # ------------------------------------------------------------------------------

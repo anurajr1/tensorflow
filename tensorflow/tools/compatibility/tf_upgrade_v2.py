@@ -51,11 +51,31 @@ class TFAPIChangeSpec(ast_edits.APIChangeSpec):
         "tf.nn.sufficient_statistics": {
             "keep_dims": "keepdims"
         },
-        "tf.zeros_like": {
-            "tensor": "input",
+        "tf.sparse.split": {
+            "split_dim": "axis",
         },
-        "tf.ones_like": {
-            "tensor": "input",
+        "tf.multinomial": {
+            "output_dtype": "dtype",
+        },
+        "tf.random.multinomial": {
+            "output_dtype": "dtype",
+        },
+        "tf.nn.conv3d": {
+            "filter": "filters"
+        },
+        "tf.nn.conv3d_transpose": {
+            "value": "input",
+            "filter": "filters",
+        },
+        "tf.nn.convolution": {
+            "filter": "filters",
+            "dilation_rate": "dilations",
+        },
+        "tf.gfile.Exists": {
+            "filename": "path",
+        },
+        "tf.random.stateless_multinomial": {
+            "output_dtype": "dtype",
         },
     }
 
@@ -63,6 +83,9 @@ class TFAPIChangeSpec(ast_edits.APIChangeSpec):
     self.symbol_renames = renames_v2.renames
     # pylint: disable=line-too-long
     # Add additional renames not in renames_v2.py here.
+    # IMPORTANT: For the renames in here, if you also need to add to
+    # function_reorders or function_keyword_renames, use the OLD function name.
+    # These renames happen after the arguments have been processed.
     self.symbol_renames.update({
         "tf.contrib.data.AUTOTUNE": "tf.data.experimental.AUTOTUNE",
         "tf.contrib.data.Counter": "tf.data.experimental.Counter",
@@ -108,6 +131,9 @@ class TFAPIChangeSpec(ast_edits.APIChangeSpec):
         "tf.contrib.data.unique": "tf.data.experimental.unique",
         "tf.quantize_v2": "tf.quantization.quantize",
         "tf.sparse_concat": "tf.sparse.concat",
+        "tf.sparse_split": "tf.sparse.split",
+        "tf.multinomial": "tf.random.categorical",
+        "tf.random.multinomial": "tf.random.categorical",
         "tf.load_file_system_library": "tf.load_library",
     })
     # pylint: enable=line-too-long
@@ -130,13 +156,23 @@ class TFAPIChangeSpec(ast_edits.APIChangeSpec):
         "tf.argmin": ["input", "axis", "name", "dimension", "output_type"],
         "tf.boolean_mask": ["tensor", "mask", "name", "axis"],
         "tf.convert_to_tensor": ["value", "dtype", "name", "preferred_dtype"],
+        "tf.nn.convolution": [
+            "input", "filter", "padding", "strides", "dilation_rate", "name",
+            "data_format"],
+        "tf.nn.crelu": ["features", "name", "axis"],
         "tf.nn.pool": [
             "input", "window_shape", "pooling_type", "padding", "dilation_rate",
             "strides", "name", "data_format"
         ],
-        "tf.nn.separable_conv2d": [
-            "input", "depthwise_filter", "pointwise_filter", "strides",
-            "padding", "data_format", "dilations", "name"
+        "tf.nn.depthwise_conv2d": [
+            "input", "filter", "strides", "padding", "rate", "name",
+            "data_format"
+        ],
+        "tf.multinomial": [
+            "logits", "num_samples", "seed", "name", "output_dtype"
+        ],
+        "tf.random.multinomial": [
+            "logits", "num_samples", "seed", "name", "output_dtype"
         ],
         "tf.pad": ["tensor", "paddings", "mode", "name", "constant_values"],
         "tf.quantize_v2": [
@@ -148,6 +184,17 @@ class TFAPIChangeSpec(ast_edits.APIChangeSpec):
         "tf.sparse.concat": [
             "axis", "sp_inputs", "name", "expand_nonconcat_dim", "concat_dim"
         ],
+        "tf.random.poisson": ["lam", "shape", "dtype", "seed", "name"],
+        "tf.sparse.segment_mean": [
+            "data", "indices", "segment_ids", "name", "num_segments"
+        ],
+        "tf.sparse.segment_sqrt_n": [
+            "data", "indices", "segment_ids", "name", "num_segments"
+        ],
+        "tf.sparse.segment_sum": [
+            "data", "indices", "segment_ids", "name", "num_segments"
+        ],
+        "tf.strings.length": ["input", "name", "unit"],
     }
 
     # Specially handled functions.
@@ -167,9 +214,38 @@ class TFAPIChangeSpec(ast_edits.APIChangeSpec):
         "SUM_OVER_BATCH_SIZE.\n"
     )
 
+    assert_return_type_comment = (
+        "WARNING: assert_* functions have been changed to return None, the "
+        "data argument has been removed, and arguments have been reordered."
+    )
+
+    assert_rank_comment = (
+        "WARNING: assert_rank_* functions have been changed to return None, and"
+        " the data and summarize arguments have been removed."
+    )
+
     # Function warnings. <function name> placeholder inside warnings will be
     # replaced by function name.
     self.function_warnings = {
+        "tf.assert_greater": assert_return_type_comment,
+        "tf.assert_equal": assert_return_type_comment,
+        "tf.assert_less": assert_return_type_comment,
+        "tf.assert_rank": assert_rank_comment,
+        "tf.debugging.assert_equal": assert_return_type_comment,
+        "tf.debugging.assert_greater": assert_return_type_comment,
+        "tf.debugging.assert_greater_equal": assert_return_type_comment,
+        "tf.debugging.assert_integer": assert_return_type_comment,
+        "tf.debugging.assert_less": assert_return_type_comment,
+        "tf.debugging.assert_less_equal": assert_return_type_comment,
+        "tf.debugging.assert_near": assert_return_type_comment,
+        "tf.debugging.assert_negative": assert_return_type_comment,
+        "tf.debugging.assert_non_negative": assert_return_type_comment,
+        "tf.debugging.assert_non_positive": assert_return_type_comment,
+        "tf.debugging.assert_none_equal": assert_return_type_comment,
+        "tf.debugging.assert_positive": assert_return_type_comment,
+        "tf.debugging.assert_rank": assert_rank_comment,
+        "tf.debugging.assert_rank_at_least": assert_rank_comment,
+        "tf.debugging.assert_rank_in": assert_rank_comment,
         "tf.train.exponential_decay":
             decay_function_comment,
         "tf.train.piecewise_constant":
@@ -204,6 +280,17 @@ class TFAPIChangeSpec(ast_edits.APIChangeSpec):
             default_loss_reduction_changed,
         "tf.estimator.BaselineRegressor":
             default_loss_reduction_changed,
+        "tf.nn.conv1d":
+        "WARNING: use_cudnn_on_gpu argument has been removed and \"value\" was "
+        "renamed to \"input\"",
+        "tf.nn.conv2d":
+        "WARNING: use_cudnn_on_gpu argument has been removed and \"filter\" "
+        "was renamed to \"filters\"",
+        "tf.nn.conv2d_backprop_filter":
+        "WARNING: use_cudnn_on_gpu argument has been removed",
+        "tf.nn.conv2d_backprop_input":
+        "WARNING: use_cudnn_on_gpu argument has been removed and \"filter\" "
+        "was renamed to \"filters\"",
     }
     # Right now we can't have both a rename and a warning.
     self.symbol_renames = {
