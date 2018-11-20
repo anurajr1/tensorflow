@@ -20,11 +20,11 @@ cuda_py_test(
     name = "values_test",
     srcs = ["values_test.py"],
     additional_deps = [
-        ":mirrored_strategy",
         ":combinations",
+        ":mirrored_strategy",
         ":multi_worker_test_base",
-        "//tensorflow/core:protos_all_py",
         "@absl_py//absl/testing:parameterized",
+        "//tensorflow/core:protos_all_py",
         "//tensorflow/python:array_ops",
         "//tensorflow/python:constant_op",
         "//tensorflow/python:device_util",
@@ -40,7 +40,6 @@ cuda_py_test(
         "//tensorflow/python/estimator:estimator_py",
     ],
     tags = [
-        "no_oss",
         "no_pip",
     ],
 )
@@ -223,28 +222,6 @@ py_test(
 )
 
 py_test(
-    name = "mirrored_strategy_test",
-    srcs = ["mirrored_strategy_test.py"],
-    srcs_version = "PY2AND3",
-    tags = [
-        "no_pip",
-    ],
-    deps = [
-        ":mirrored_strategy",
-        ":multi_worker_test_base",
-        ":strategy_test_lib",
-        "//tensorflow/python:constant_op",
-        "//tensorflow/python:distribute",
-        "//tensorflow/python:framework_ops",
-        "//tensorflow/python:framework_test_lib",
-        "//tensorflow/python:training",
-        "//tensorflow/python:variable_scope",
-        "//tensorflow/python/eager:context",
-        "//tensorflow/python/eager:test",
-    ],
-)
-
-py_test(
     name = "one_device_strategy_test",
     srcs = ["one_device_strategy_test.py"],
     srcs_version = "PY2AND3",
@@ -259,10 +236,12 @@ py_test(
     ],
 )
 
+# TODO(priyag): Rename this test to mirrored_strategy_test
 cuda_py_test(
     name = "mirrored_strategy_multigpu_test",
     srcs = ["mirrored_strategy_multigpu_test.py"],
     additional_deps = [
+        ":combinations",
         ":mirrored_strategy",
         ":multi_worker_test_base",
         ":strategy_test_lib",
@@ -278,16 +257,11 @@ cuda_py_test(
         "//tensorflow/python/eager:context",
         "//tensorflow/python/eager:test",
     ],
+    shard_count = 5,
     tags = [
         "guitar",
-        "no_pip",
         "multi_and_single_gpu",
-        # Do not perform the extra analysis on this test, because it is already
-        # performed for the `:mirrored_strategy_test` target.
-        "no_oss",
-        "noasan",
-        "notap",
-        "notsan",
+        "no_pip",
     ],
 )
 
@@ -500,7 +474,7 @@ cuda_py_test(
         "//tensorflow/python:platform",
         "//tensorflow/python:summary",
     ],
-    shard_count = 5,
+    shard_count = 48,
     tags = [
         "multi_and_single_gpu",
         "no_pip",

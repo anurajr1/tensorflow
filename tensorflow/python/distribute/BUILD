@@ -109,7 +109,6 @@ py_library(
 
 py_test(
     name = "distribute_coordinator_test",
-    size = "large",
     srcs = ["distribute_coordinator_test.py"],
     srcs_version = "PY2AND3",
     tags = [
@@ -216,7 +215,10 @@ py_library(
 py_library(
     name = "reduce_util",
     srcs = ["reduce_util.py"],
-    deps = [],
+    deps = [
+        "//tensorflow/python:util",
+        "//tensorflow/python:variable_scope",
+    ],
 )
 
 py_library(
