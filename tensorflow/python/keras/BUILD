@@ -597,6 +597,17 @@ py_test(
 )
 
 py_test(
+    name = "tf_utils_test",
+    size = "small",
+    srcs = ["utils/tf_utils_test.py"],
+    srcs_version = "PY2AND3",
+    deps = [
+        ":keras",
+        "//tensorflow/python:client_testlib",
+    ],
+)
+
+py_test(
     name = "io_utils_test",
     size = "small",
     srcs = ["utils/io_utils_test.py"],
@@ -743,7 +754,10 @@ py_test(
     size = "enormous",
     srcs = ["engine/training_generator_test.py"],
     srcs_version = "PY2AND3",
-    tags = ["notsan"],
+    tags = [
+        "no_oss",
+        "notsan",
+    ],
     deps = [
         ":keras",
         "//tensorflow/python:client_testlib",

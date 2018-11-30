@@ -59,7 +59,7 @@ limitations under the License.
 #if GOOGLE_CUDA
 #if GOOGLE_TENSORRT
 #include "cuda/include/cuda_runtime_api.h"
-#include "tensorrt/include/NvInfer.h"
+#include "tensorrt/NvInfer.h"
 namespace tensorflow {
 namespace tensorrt {
 namespace convert {
@@ -96,6 +96,8 @@ Status TrtCandidateSelector::IsTensorRTCandidate(const tensorflow::Node* node) {
       "MaxPool",
       "BiasAdd",
       "Relu",
+      "Sigmoid",
+      "Tanh",
       "Add",
       "Mul",
       "Sub",

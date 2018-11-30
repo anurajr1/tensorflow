@@ -1393,6 +1393,7 @@ py_test(
     srcs_version = "PY2AND3",
     tags = ["no_pip"],  # test_ops_2 is not available in pip.
     deps = [
+        ":cond_v2",
         ":control_flow_ops",
         ":errors",
         ":framework",
@@ -1407,6 +1408,7 @@ py_test(
         ":util",
         ":variable_scope",
         ":variables",
+        ":while_v2",
         "//tensorflow/core:protos_all_py",
         "//tensorflow/python/eager:context",
         "//tensorflow/python/eager:function",
@@ -3529,6 +3531,19 @@ py_library(
         "//tensorflow/python/ops/losses",
         "//tensorflow/python/training/checkpointable:base",
         "//tensorflow/python/training/checkpointable:util",
+    ],
+)
+
+# Dependency added and used by ClusterResolvers to avoid circular dependency between keras, distribute, and training.
+py_library(
+    name = "training_server_lib",
+    srcs = ["training/server_lib.py"],
+    srcs_version = "PY2AND3",
+    deps = [
+        ":framework",
+        ":pywrap_tensorflow",
+        ":util",
+        "//tensorflow/core:protos_all_py",
     ],
 )
 

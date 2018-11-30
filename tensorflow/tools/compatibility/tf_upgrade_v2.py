@@ -433,6 +433,16 @@ class TFAPIChangeSpec(ast_edits.APIChangeSpec):
             "tf.math.confusion_matrix",
         "tf.decode_csv":
             "tf.io.decode_csv",
+        "tf.data.Iterator":
+            "tf.compat.v1.data.Iterator",
+        "tf.nn.fused_batch_norm":
+            "tf.compat.v1.nn.fused_batch_norm",
+        "tf.losses.Reduction.MEAN":
+            "tf.compat.v1.losses.Reduction.MEAN",
+        "tf.losses.Reduction.SUM_BY_NONZERO_WEIGHTS":
+            "tf.compat.v1.losses.Reduction.SUM_BY_NONZERO_WEIGHTS",
+        "tf.losses.Reduction.SUM_OVER_NONZERO_WEIGHTS":
+            "tf.compat.v1.losses.Reduction.SUM_OVER_NONZERO_WEIGHTS",
     }
     # pylint: enable=line-too-long
 
@@ -619,11 +629,12 @@ class TFAPIChangeSpec(ast_edits.APIChangeSpec):
     }
 
     decay_function_comment = (
-        "ERROR: <function name> has been changed to return a callable instead "
-        "of a tensor when graph building, but its functionality remains "
+        "WARNING: <function name> has been changed to return a callable instead"
+        " of a tensor when graph building, but its functionality remains "
         "unchanged during eager execution (returns a callable like "
         "before). The converter cannot detect and fix this reliably, so "
-        "you need to inspect this usage manually.\n"
+        "this usage has been converted to compat.v1 (even though it may already"
+        " be correct).\n"
     )
 
     # TODO(b/118888586): add default value change to update script.
@@ -635,17 +646,23 @@ class TFAPIChangeSpec(ast_edits.APIChangeSpec):
     assert_return_type_comment = (
         "WARNING: assert_* functions have been changed to return None, the "
         "data argument has been removed, and arguments have been reordered."
+        "\nThe calls have been converted to compat.v1 for safety (even though "
+        " they may already have been correct)."
     )
 
     assert_rank_comment = (
         "WARNING: assert_rank_* functions have been changed to return None, and"
         " the data and summarize arguments have been removed."
+        "\nThe calls have been converted to compat.v1 for safety (even though "
+        " they may already have been correct)."
     )
 
     tf_01s_like_no_optimize_comment = (
         "WARNING: tf.zeros_like and tf.ones_like no longer have the optimize "
         "argument in TF 2.0 or after (also, `tensor' argument is renamed to "
         "`input')."
+        "\nThe calls have been converted to compat.v1 for safety (even though "
+        " they may already have been correct)."
     )
 
     # Function warnings. <function name> placeholder inside warnings will be
@@ -670,9 +687,11 @@ class TFAPIChangeSpec(ast_edits.APIChangeSpec):
         "tf.debugging.assert_rank": assert_rank_comment,
         "tf.debugging.assert_rank_at_least": assert_rank_comment,
         "tf.debugging.assert_rank_in": assert_rank_comment,
+        "tf.flags": "tf.flags has been removed, please use the argparse or absl"
+                    " module if you need command line parsing.",
         "tf.train.exponential_decay":
             decay_function_comment,
-        "tf.train.piecewise_constant":
+        "tf.train.piecewise_constant_decay":
             decay_function_comment,
         "tf.train.polynomial_decay":
             decay_function_comment,
@@ -720,15 +739,14 @@ class TFAPIChangeSpec(ast_edits.APIChangeSpec):
         "tf.zeros_like": tf_01s_like_no_optimize_comment,
         "tf.ones_like": tf_01s_like_no_optimize_comment,
     }
-    # Right now we can't have both a rename and a warning.
+
     self.symbol_renames = {
         name: new_name
         for name, new_name in self.symbol_renames.items()
-        if name not in self.function_warnings
     }
 
     export_saved_model_renamed = (
-        "(Manual edit required) Please rename the function export_savedmodel() "
+        "(Manual edit required) Please rename the method export_savedmodel() "
         "to export_saved_model(). Two things to note:\n\t(1) The argument "
         "strip_default_attributes has been removed. The function will always "
         "strip the default attributes from ops. If this breaks your code, "
