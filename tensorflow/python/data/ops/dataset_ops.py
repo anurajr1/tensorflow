@@ -187,8 +187,7 @@ class DatasetV2(object):
       RuntimeError: If eager execution is not enabled.
     """
     if context.executing_eagerly():
-      dataset = self._apply_options()
-      return iterator_ops.EagerIterator(dataset)
+      return iterator_ops.EagerIterator(self)
     else:
       raise RuntimeError("dataset.__iter__() is only supported when eager "
                          "execution is enabled.")
@@ -948,7 +947,9 @@ class DatasetV2(object):
        `self.output_types`) to another nested structure of tensors.
       num_parallel_calls: (Optional.) A `tf.int32` scalar `tf.Tensor`,
         representing the number elements to process in parallel. If not
-        specified, elements will be processed sequentially.
+        specified, elements will be processed sequentially. If the value
+        `tf.data.experimental.AUTOTUNE` is used, then the number of parallel
+        calls is set dynamically based on available CPU.
 
     Returns:
       Dataset: A `Dataset`.
@@ -1059,7 +1060,9 @@ class DatasetV2(object):
       num_parallel_calls: (Optional.) If specified, the implementation creates
         a threadpool, which is used to fetch inputs from cycle elements
         asynchronously and in parallel. The default behavior is to fetch inputs
-        from cycle elements synchronously with no parallelism.
+        from cycle elements synchronously with no parallelism. If the value
+        `tf.data.experimental.AUTOTUNE` is used, then the number of parallel
+        calls is set dynamically based on available CPU.
 
     Returns:
       Dataset: A `Dataset`.
@@ -1318,8 +1321,7 @@ class DatasetV1(DatasetV2):
       An `Iterator` over the elements of this dataset.
     """
     if context.executing_eagerly():
-      dataset = self._apply_options()
-      return iterator_ops.EagerIterator(dataset)
+      return iterator_ops.EagerIterator(self)
 
     graph_level_seed, op_level_seed = core_random_seed.get_seed(None)
 
@@ -1702,8 +1704,8 @@ class Options(options_lib.OptionsBase):
       name="experimental_deterministic",
       ty=bool,
       docstring=
-      "Whether to dynamically adjust the values of tunable parameters (e.g. "
-      "degrees of parallelism).")
+      "Whether the outputs need to be produced in deterministic order."
+  )
 
   experimental_numa_aware = options_lib.create_option(
       name="experimental_numa_aware",
@@ -1729,22 +1731,11 @@ class Options(options_lib.OptionsBase):
     """Produces the list of enabled static optimizations."""
 
     result = []
-    exp_optimization_options = self.experimental_optimization
-    if exp_optimization_options:
-      optimizations = [
-          "filter_fusion",
-          "hoist_random_uniform",
-          "map_and_batch_fusion",
-          "map_and_filter_fusion",
-          "map_fusion",
-          "map_parallelization",
-          "map_vectorization",
-          "noop_elimination",
-          "shuffle_and_repeat_fusion",
-      ]
-      for optimization in optimizations:
-        if getattr(exp_optimization_options, optimization):
-          result.append(optimization)
+    exp_optimization_options = (
+        self.experimental_optimization or
+        optimization_options.OptimizationOptions())  # If not set, use default
+    result.extend(exp_optimization_options._static_optimizations())  # pylint: disable=protected-access
+
     if self.experimental_numa_aware:
       result.append("make_numa_aware")
     if self.experimental_deterministic is False:
@@ -1924,6 +1915,7 @@ class _VariantDataset(DatasetV2):
     return self._structure
 
 
+@tf_export("data.experimental.DatasetStructure")
 class DatasetStructure(structure_lib.Structure):
   """Represents a `Dataset` of structured values."""
 
