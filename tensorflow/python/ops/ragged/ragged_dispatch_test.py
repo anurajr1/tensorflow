@@ -21,6 +21,7 @@ from __future__ import print_function
 from absl.testing import parameterized
 import numpy as np
 
+from tensorflow.python.eager import context
 from tensorflow.python.framework import dtypes
 from tensorflow.python.framework import errors
 from tensorflow.python.framework import ops
@@ -32,6 +33,7 @@ from tensorflow.python.ops import math_ops
 from tensorflow.python.ops import parsing_ops
 from tensorflow.python.ops import ragged
 from tensorflow.python.ops import string_ops
+from tensorflow.python.ops.ragged import ragged_test_util
 from tensorflow.python.platform import googletest
 
 # Constants listing various op types to test.  Each operation
@@ -126,7 +128,8 @@ BINARY_INT_OPS = [
 ]
 
 
-class RaggedElementwiseOpsTest(test_util.TensorFlowTestCase,
+@test_util.run_all_in_graph_and_eager_modes
+class RaggedElementwiseOpsTest(ragged_test_util.RaggedTensorTestCase,
                                parameterized.TestCase):
 
   def assertSameShape(self, x, y):
@@ -137,7 +140,7 @@ class RaggedElementwiseOpsTest(test_util.TensorFlowTestCase,
       for (x_splits, y_splits) in zip(x.nested_row_splits, y.nested_row_splits):
         self.assertAllEqual(x_splits, y_splits)
       self.assertAllEqual(
-          array_ops.shape(x.inner_values), array_ops.shape(y.inner_values))
+          array_ops.shape(x.flat_values), array_ops.shape(y.flat_values))
     else:
       self.assertIsInstance(y, ops.Tensor)
       self.assertAllEqual(array_ops.shape(x), array_ops.shape(y))
@@ -214,19 +217,18 @@ class RaggedElementwiseOpsTest(test_util.TensorFlowTestCase,
     result = op(x, **extra_args)
 
     # Run the wrapped op on the dense values, for comparison.
-    dense_x = x.inner_values if isinstance(x, ragged.RaggedTensor) else x
+    dense_x = x.flat_values if isinstance(x, ragged.RaggedTensor) else x
     expected_flat_values = array_ops.reshape(op(dense_x, **extra_args), [-1])
 
-    with self.test_session():
-      # Check that the result has the expected shape.
-      self.assertSameShape(x, result)
+    # Check that the result has the expected shape.
+    self.assertSameShape(x, result)
 
-      # Check that the result has the expected (flattened) values.
-      if isinstance(result, ragged.RaggedTensor):
-        result_flat_values = array_ops.reshape(result.inner_values, [-1])
-      else:
-        result_flat_values = array_ops.reshape(result, [-1])
-      self.assertAllEqual(expected_flat_values, result_flat_values)
+    # Check that the result has the expected (flattened) values.
+    if isinstance(result, ragged.RaggedTensor):
+      result_flat_values = array_ops.reshape(result.flat_values, [-1])
+    else:
+      result_flat_values = array_ops.reshape(result, [-1])
+    self.assertAllEqual(expected_flat_values, result_flat_values)
 
   @parameterized.parameters(
       [
@@ -326,21 +328,20 @@ class RaggedElementwiseOpsTest(test_util.TensorFlowTestCase,
       result = op(x, y, **extra_args)
 
     # Run the wrapped op on the dense values, for comparison.
-    dense_x = x.inner_values if isinstance(x, ragged.RaggedTensor) else x
-    dense_y = y.inner_values if isinstance(y, ragged.RaggedTensor) else y
+    dense_x = x.flat_values if isinstance(x, ragged.RaggedTensor) else x
+    dense_y = y.flat_values if isinstance(y, ragged.RaggedTensor) else y
     expected_flat_values = array_ops.reshape(
         op(dense_x, dense_y, **extra_args), [-1])
 
-    with self.test_session():
-      # Check that the result has the expected shape.
-      self.assertSameShape(y, result)
+    # Check that the result has the expected shape.
+    self.assertSameShape(y, result)
 
-      # Check that the result has the expected (flattened) values.
-      if isinstance(result, ragged.RaggedTensor):
-        result_flat_values = array_ops.reshape(result.inner_values, [-1])
-      else:
-        result_flat_values = array_ops.reshape(result, [-1])
-      self.assertAllEqual(expected_flat_values, result_flat_values)
+    # Check that the result has the expected (flattened) values.
+    if isinstance(result, ragged.RaggedTensor):
+      result_flat_values = array_ops.reshape(result.flat_values, [-1])
+    else:
+      result_flat_values = array_ops.reshape(result, [-1])
+    self.assertAllEqual(expected_flat_values, result_flat_values)
 
   @parameterized.parameters(
       [
@@ -384,27 +385,27 @@ class RaggedElementwiseOpsTest(test_util.TensorFlowTestCase,
 
     # Run the wrapped op on the dense values, for comparison.
     dense_inputs = [
-        x.inner_values if isinstance(x, ragged.RaggedTensor) else x
+        x.flat_values if isinstance(x, ragged.RaggedTensor) else x
         for x in inputs
     ]
     expected_flat_values = array_ops.reshape(
         op(dense_inputs, **extra_args), [-1])
 
-    with self.test_session():
-      # Check that the result has the expected shape.
-      self.assertSameShape(inputs[0], result)
+    # Check that the result has the expected shape.
+    self.assertSameShape(inputs[0], result)
 
-      # Check that the result has the expected (flattened) values.
-      if isinstance(result, ragged.RaggedTensor):
-        result_flat_values = array_ops.reshape(result.inner_values, [-1])
-      else:
-        result_flat_values = array_ops.reshape(result, [-1])
-      self.assertAllEqual(expected_flat_values, result_flat_values)
+    # Check that the result has the expected (flattened) values.
+    if isinstance(result, ragged.RaggedTensor):
+      result_flat_values = array_ops.reshape(result.flat_values, [-1])
+    else:
+      result_flat_values = array_ops.reshape(result, [-1])
+    self.assertAllEqual(expected_flat_values, result_flat_values)
 
-  @test_util.run_deprecated_v1
   def testElementwiseOpUnknownRankError(self):
+    if context.executing_eagerly():
+      return
     x = ragged.constant([[1, 2], [3]])
-    y = ragged.from_row_splits(
+    y = ragged.RaggedTensor.from_row_splits(
         array_ops.placeholder_with_default([1, 2, 3], shape=None), x.row_splits)
     with self.assertRaisesRegexp(ValueError,
                                  r'Unable to broadcast: unknown rank'):
@@ -428,27 +429,155 @@ class RaggedElementwiseOpsTest(test_util.TensorFlowTestCase,
     x = ragged.convert_to_tensor_or_ragged_tensor(x, dtype=dtypes.int32)
     y = ragged.convert_to_tensor_or_ragged_tensor(y, dtype=dtypes.int32)
     result = x + y
-    with self.cached_session():
-      self.assertEqual(result.eval().tolist(), expected)
+    self.assertRaggedEqual(result, expected)
 
   def testElementwiseOpShapeMismatch(self):
     x = ragged.constant([[1, 2, 3], [4, 5]])
     y = ragged.constant([[1, 2, 3], [4, 5, 6]])
-    with self.assertRaisesRegexp(errors.InvalidArgumentError,
-                                 'Incompatible shapes'):
-      with self.cached_session():
-        math_ops.add(x, y).eval()
+    with self.assertRaises(errors.InvalidArgumentError):
+      self.evaluate(math_ops.add(x, y))
 
   def testBinaryOpSparseAndRagged(self):
     x = ragged.constant([[1, 2, 3], [4, 5]])
     y = sparse_tensor.SparseTensor([[0, 0], [0, 1], [2, 0]], [1, 2, 3], [3, 2])
-    with self.assertRaises(TypeError):
-      with self.cached_session():
-        math_ops.add(x, y).eval()
+    with self.assertRaises((TypeError, ValueError)):
+      self.evaluate(math_ops.add(x, y))
 
-    with self.assertRaises(TypeError):
-      with self.cached_session():
-        math_ops.add_n([x, y]).eval()
+    with self.assertRaises((TypeError, ValueError)):
+      self.evaluate(math_ops.add_n([x, y]))
+
+  @parameterized.parameters([
+      dict(
+          op=array_ops.batch_gather,
+          args=(ragged.constant_value([[5, 6, 7], [8, 9]]),
+                ragged.constant_value([[2, 1, 0], [1]])),
+          expected=ragged.constant_value([[7, 6, 5], [9]])),
+      dict(
+          op=array_ops.concat,
+          args=([ragged.constant_value([[1, 2, 3], [4]], dtype=np.int32),
+                 np.array([[5, 6]], dtype=np.int32)],),
+          kwargs={'axis': 0},
+          expected=ragged.constant_value([[1, 2, 3], [4], [5, 6]])),
+      dict(
+          op=array_ops.expand_dims,
+          kwargs={'input': ragged.constant_value([[1, 2], [3]]),
+                  'axis': 0},
+          expected=ragged.constant_value([[[1, 2], [3]]])),
+      dict(
+          op=array_ops.expand_dims_v2,
+          kwargs={'input': ragged.constant_value([[1, 2], [3]]),
+                  'axis': -1},
+          expected=ragged.constant_value([[[1], [2]], [[3]]],
+                                         ragged_rank=1),),
+      dict(
+          op=array_ops.gather,
+          kwargs={'params': ragged.constant_value([[1, 2], [3]]),
+                  'indices': [1, 0, 1]},
+          expected=ragged.constant_value([[3], [1, 2], [3]])),
+      dict(
+          op=array_ops.gather_v2,
+          kwargs={'params': ragged.constant_value([[1, 2], [3]]),
+                  'indices': ragged.constant_value([[1, 0], [1]])},
+          expected=ragged.constant_value([[[3], [1, 2]], [[3]]])),
+      dict(
+          op=array_ops.gather_nd,
+          kwargs={'params': ragged.constant_value([[7, 8], [9]]),
+                  'indices': [[0, 1], [1, 0], [0, 0]]},
+          expected=ragged.constant_value([8, 9, 7])),
+      dict(
+          op=array_ops.stack,
+          args=([ragged.constant_value([[1, 2, 3], [4]], dtype=np.int32),
+                 np.array([[5, 6]], dtype=np.int32)],),
+          expected=ragged.constant_value([[[1, 2, 3], [4]], [[5, 6]]])),
+      dict(
+          op=array_ops.tile,
+          args=([ragged.constant_value([[1, 2], [3]], dtype=np.int32), [2, 3]]),
+          expected=ragged.constant_value([[1, 2, 1, 2, 1, 2], [3, 3, 3],
+                                          [1, 2, 1, 2, 1, 2], [3, 3, 3]])),
+      dict(
+          op=array_ops.where,
+          args=(ragged.constant_value([[True, False], [True]]),
+                ragged.constant_value([[b'A', b'B'], [b'C']]),
+                ragged.constant_value([[b'a', b'b'], [b'c']])),
+          expected=ragged.constant_value([[b'A', b'b'], [b'C']])),
+      dict(
+          op=math_ops.unsorted_segment_sum,
+          kwargs={'data': ragged.constant_value([[1, 2], [3]]),
+                  'segment_ids': ragged.constant_value([[0, 2], [0]]),
+                  'num_segments': 3},
+          expected=[4, 0, 2]),
+      dict(
+          op=math_ops.unsorted_segment_prod,
+          kwargs={'data': ragged.constant_value([[1, 2], [3]]),
+                  'segment_ids': ragged.constant_value([[0, 2], [0]]),
+                  'num_segments': 3},
+          expected=[3, 1, 2]),
+      dict(
+          op=math_ops.unsorted_segment_min,
+          kwargs={'data': ragged.constant_value([[1, 2], [3]]),
+                  'segment_ids': ragged.constant_value([[0, 1], [0]]),
+                  'num_segments': 2},
+          expected=[1, 2]),
+      dict(
+          op=math_ops.unsorted_segment_max,
+          kwargs={'data': ragged.constant_value([[1, 2], [3]]),
+                  'segment_ids': ragged.constant_value([[0, 1], [0]]),
+                  'num_segments': 2},
+          expected=[3, 2]),
+      dict(
+          op=math_ops.unsorted_segment_mean,
+          kwargs={'data': ragged.constant_value([[1, 2], [3]]),
+                  'segment_ids': ragged.constant_value([[0, 1], [0]]),
+                  'num_segments': 2},
+          expected=[2, 2]),
+      dict(
+          op=math_ops.unsorted_segment_sqrt_n,
+          kwargs={'data': ragged.constant_value([[1.0, 2.0], [3.0, 4.0, 6.0]]),
+                  'segment_ids': ragged.constant_value([[0, 1], [0, 0, 0]]),
+                  'num_segments': 2},
+          expected=[7.0, 2.0]),
+      dict(
+          op=math_ops.reduce_sum,
+          kwargs={'input_tensor': ragged.constant_value([[1, 2], [3, 4, 5]]),
+                  'axis': 1},
+          expected=[3, 12]),
+      dict(
+          op=math_ops.reduce_prod,
+          kwargs={'input_tensor': ragged.constant_value([[1, 2], [3, 4, 5]]),
+                  'axis': 1},
+          expected=[2, 60]),
+      dict(
+          op=math_ops.reduce_min,
+          kwargs={'input_tensor': ragged.constant_value([[1, 2], [3, 4, 5]]),
+                  'axis': 1},
+          expected=[1, 3]),
+      dict(
+          op=math_ops.reduce_max,
+          kwargs={'input_tensor': ragged.constant_value([[1, 2], [3, 4, 5]]),
+                  'axis': 1},
+          expected=[2, 5]),
+      dict(
+          op=math_ops.reduce_mean,
+          kwargs={'input_tensor': ragged.constant_value([[1, 3], [3, 4, 5]]),
+                  'axis': 1},
+          expected=[2, 4]),
+      dict(
+          op=math_ops.reduce_any,
+          kwargs={'input_tensor': ragged.constant_value([[True, False],
+                                                         [True, True, True]]),
+                  'axis': 1},
+          expected=[True, True]),
+      dict(
+          op=math_ops.reduce_all,
+          kwargs={'input_tensor': ragged.constant_value([[True, False],
+                                                         [True, True, True]]),
+                  'axis': 1},
+          expected=[False, True]),
+  ])
+  def testRaggedDispatch(self, op, expected, args=(), kwargs=None):
+    if kwargs is None: kwargs = {}
+    result = op(*args, **kwargs)
+    self.assertRaggedEqual(result, expected)
 
 
 if __name__ == '__main__':

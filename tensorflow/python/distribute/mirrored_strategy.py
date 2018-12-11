@@ -50,8 +50,8 @@ from tensorflow.python.util.tf_export import tf_export
 
 
 @contextlib.contextmanager
-def _enter_graph(g):
-  if context.executing_eagerly():
+def _enter_graph(g, eager):
+  if eager:
     with g.as_default(), context.eager_mode():
       yield
   else:
@@ -169,7 +169,12 @@ def _call_for_each_replica(distribution, fn, args, kwargs):
           # capture the name_scope from the first MRT and assume it is
           # the same for all other MRTs.
           mtt_captured_name_scope = threads[0].captured_name_scope
-          with ops.name_scope(mtt_captured_name_scope):
+          # Capture and merge the control dependencies from all the threads.
+          mtt_captured_control_deps = set()
+          for t in threads:
+            mtt_captured_control_deps.update(t.captured_control_deps)
+          with ops.name_scope(mtt_captured_name_scope),\
+              ops.control_dependencies(mtt_captured_control_deps):
             merge_result = threads[0].merge_fn(distribution, *merge_args,
                                                **merge_kwargs)
           for t in threads:
@@ -834,14 +839,19 @@ class MirroredExtended(distribute_lib.DistributionStrategyExtended):
       self.has_paused = threading.Event()
       # These fields have to do with inheriting various contexts from the
       # parent thread:
+      ctx = context.context()
+      self.in_eager = ctx.executing_eagerly()
       # pylint: disable=protected-access
-      self.context_mode = context.context()._eager_context.mode
-      if not context.context()._context_handle:
-        context.context()._initialize_handle_and_devices()
+      if not ctx._context_handle:
+        ctx._initialize_handle_and_devices()
       self.context_device_policy = (
           pywrap_tensorflow.TFE_ContextGetDevicePlacementPolicy(
-              context.context()._context_handle))
+              ctx._context_handle))
       self.graph = ops.get_default_graph()
+      with ops.init_scope():
+        self._init_in_eager = context.executing_eagerly()
+        self._init_graph = ops.get_default_graph()
+
       self._variable_creator_stack = self.graph._variable_creator_stack[:]
       self._captured_var_scope = variable_scope.get_variable_scope()
       # Adding a "/" at end lets us re-enter this scope later.
@@ -862,9 +872,9 @@ class MirroredExtended(distribute_lib.DistributionStrategyExtended):
         if self.coord.should_stop():
           return
         with self.coord.stop_on_exception(), \
-            context.context()._mode(self.context_mode), \
+            _enter_graph(self._init_graph, self._init_in_eager), \
+            _enter_graph(self.graph, self.in_eager), \
             context.context().device_policy(self.context_device_policy), \
-            _enter_graph(self.graph), \
             MirroredReplicaContext(self.distribution, constant_op.constant(
                 self.replica_id, dtypes.int32)), \
             ops.device(self.device), \
@@ -898,6 +908,8 @@ class MirroredReplicaContext(distribute_lib.ReplicaContext):
     # Adding a "/" at end lets us re-enter this scope later.
     if t.captured_name_scope:
       t.captured_name_scope += "/"
+
+    t.captured_control_deps = t.graph._current_control_dependencies()  # pylint: disable=protected-access
     t.has_paused.set()
     t.should_run.wait()
     t.should_run.clear()

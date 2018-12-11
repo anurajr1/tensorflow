@@ -1195,27 +1195,23 @@ class DatasetV2(object):
 
     # Compute initial values for the state classes, shapes and types based on
     # the initial state.
-    state_classes = sparse.get_classes(initial_state)
-    state_shapes = nest.pack_sequence_as(
-        initial_state, [t.get_shape() for t in nest.flatten(initial_state)])
-    state_types = nest.pack_sequence_as(
-        initial_state, [t.dtype for t in nest.flatten(initial_state)])
+    state_structure = structure_lib.Structure.from_value(initial_state)
 
     # Iteratively rerun the reduce function until reaching a fixed point on
-    # `self._state_shapes`.
+    # `state_structure`.
     need_to_rerun = True
     while need_to_rerun:
 
       wrapped_func = StructuredFunctionWrapper(
           reduce_func,
           "reduce()",
-          input_classes=(state_classes, self.output_classes),
-          input_shapes=(state_shapes, self.output_shapes),
-          input_types=(state_types, self.output_types),
+          input_structure=structure_lib.NestedStructure(
+              (state_structure, self._element_structure)),
           add_to_graph=False)
 
       # Extract and validate class information from the returned values.
       output_classes = wrapped_func.output_classes
+      state_classes = state_structure._to_legacy_output_classes()  # pylint: disable=protected-access
       for new_state_class, state_class in zip(
           nest.flatten(output_classes), nest.flatten(state_classes)):
         if not issubclass(new_state_class, state_class):
@@ -1226,6 +1222,7 @@ class DatasetV2(object):
 
       # Extract and validate type information from the returned values.
       output_types = wrapped_func.output_types
+      state_types = state_structure._to_legacy_output_types()  # pylint: disable=protected-access
       for new_state_type, state_type in zip(
           nest.flatten(output_types), nest.flatten(state_types)):
         if new_state_type != state_type:
@@ -1236,6 +1233,7 @@ class DatasetV2(object):
 
       # Extract shape information from the returned values.
       output_shapes = wrapped_func.output_shapes
+      state_shapes = state_structure._to_legacy_output_shapes()  # pylint: disable=protected-access
       flat_state_shapes = nest.flatten(state_shapes)
       flat_new_state_shapes = nest.flatten(output_shapes)
       weakened_state_shapes = [
@@ -1253,27 +1251,26 @@ class DatasetV2(object):
           break
 
       if need_to_rerun:
-        state_shapes = nest.pack_sequence_as(state_shapes,
-                                             weakened_state_shapes)
+        # TODO(b/110122868): Support a "most specific compatible structure"
+        # method for combining structures, to avoid using legacy structures
+        # here.
+        state_structure = structure_lib.convert_legacy_structure(
+            state_types,
+            nest.pack_sequence_as(state_shapes, weakened_state_shapes),
+            state_classes)
 
     reduce_func = wrapped_func.function
     reduce_func.add_to_graph(ops.get_default_graph())
 
-    return sparse.deserialize_sparse_tensors(
-        nest.pack_sequence_as(
-            output_types,
-            gen_dataset_ops.reduce_dataset(
-                self._as_variant_tensor(),  # pylint: disable=protected-access
-                nest.flatten(sparse.serialize_sparse_tensors(initial_state)),
-                reduce_func.captured_inputs,
-                f=reduce_func,
-                output_shapes=nest.flatten(
-                    sparse.as_dense_shapes(output_shapes, output_classes)),
-                output_types=nest.flatten(
-                    sparse.as_dense_types(output_types, output_classes)))),
-        output_types,
-        output_shapes,
-        output_classes)
+    # pylint: disable=protected-access
+    return state_structure._from_compatible_tensor_list(
+        gen_dataset_ops.reduce_dataset(
+            self._as_variant_tensor(),
+            state_structure._to_tensor_list(initial_state),
+            reduce_func.captured_inputs,
+            f=reduce_func,
+            output_shapes=state_structure._flat_shapes,
+            output_types=state_structure._flat_types))
 
   def with_options(self, options):
     """Returns a new `tf.data.Dataset` with the given options set.
@@ -1803,21 +1800,12 @@ class TensorDataset(DatasetSource):
               t, name="component_%d" % i)
           for i, t in enumerate(nest.flatten(tensors))
       ])
-
-    self._tensors = sparse.serialize_sparse_tensors(tensors)
-    output_classes = sparse.get_classes(tensors)
-    output_shapes = nest.pack_sequence_as(
-        tensors, [t.get_shape() for t in nest.flatten(tensors)])
-    output_types = nest.pack_sequence_as(
-        tensors, [t.dtype for t in nest.flatten(tensors)])
-    self._structure = structure_lib.convert_legacy_structure(
-        output_types, output_shapes, output_classes)
+    self._structure = structure_lib.Structure.from_value(tensors)
+    self._tensors = self._structure._to_tensor_list(tensors)  # pylint: disable=protected-access
 
   def _as_variant_tensor(self):
-    # pylint: disable=protected-access
     return gen_dataset_ops.tensor_dataset(
-        nest.flatten(self._tensors),
-        output_shapes=self._structure._flat_shapes)
+        self._tensors, output_shapes=self._structure._flat_shapes)  # pylint: disable=protected-access
 
   @property
   def _element_structure(self):
@@ -1837,27 +1825,22 @@ class TensorSliceDataset(DatasetSource):
               t, name="component_%d" % i)
           for i, t in enumerate(nest.flatten(tensors))
       ])
-      flat_tensors = nest.flatten(tensors)
+
+    batched_structure = structure_lib.Structure.from_value(tensors)
+    # pylint: disable=protected-access
+    self._tensors = batched_structure._to_batched_tensor_list(tensors)
+    self._structure = batched_structure._unbatch()
+    # pylint: enable=protected-access
 
     batch_dim = tensor_shape.Dimension(tensor_shape.dimension_value(
-        flat_tensors[0].get_shape()[0]))
-    for t in flat_tensors[1:]:
+        self._tensors[0].get_shape()[0]))
+    for t in self._tensors[1:]:
       batch_dim.assert_is_compatible_with(tensor_shape.Dimension(
           tensor_shape.dimension_value(t.get_shape()[0])))
-    self._tensors = sparse.serialize_many_sparse_tensors(tensors)
-    output_classes = sparse.get_classes(tensors)
-    output_shapes = nest.pack_sequence_as(
-        tensors, [t.get_shape()[1:] for t in nest.flatten(tensors)])
-    output_types = nest.pack_sequence_as(
-        tensors, [t.dtype for t in nest.flatten(tensors)])
-    self._structure = structure_lib.convert_legacy_structure(
-        output_types, output_shapes, output_classes)
 
   def _as_variant_tensor(self):
     return gen_dataset_ops.tensor_slice_dataset(
-        nest.flatten(self._tensors),
-        output_shapes=nest.flatten(
-            self._structure._to_legacy_output_shapes()))  # pylint: disable=protected-access
+        self._tensors, output_shapes=self._structure._flat_shapes)  # pylint: disable=protected-access
 
   @property
   def _element_structure(self):
@@ -1874,17 +1857,13 @@ class SparseTensorSliceDataset(DatasetSource):
       raise TypeError("`sparse_tensor` must be a `tf.SparseTensor` object.")
     self._sparse_tensor = sparse_tensor
 
-    output_classes = (ops.Tensor, ops.Tensor, ops.Tensor)
     indices_shape = self._sparse_tensor.indices.get_shape()
     shape_shape = self._sparse_tensor.dense_shape.get_shape()
     rank = (indices_shape.dims[1] - 1).merge_with(shape_shape.dims[0] - 1)
-    num_values = tensor_shape.Dimension(None)
-    output_shapes = (tensor_shape.TensorShape([num_values, rank]),
-                     tensor_shape.TensorShape([num_values]),
-                     tensor_shape.TensorShape([rank]))
-    output_types = (dtypes.int64, self._sparse_tensor.dtype, dtypes.int64)
-    self._structure = structure_lib.convert_legacy_structure(
-        output_types, output_shapes, output_classes)
+    self._structure = structure_lib.NestedStructure(
+        (structure_lib.TensorStructure(dtypes.int64, [None, rank]),
+         structure_lib.TensorStructure(self._sparse_tensor.dtype, [None]),
+         structure_lib.TensorStructure(dtypes.int64, [rank])))
 
   def _as_variant_tensor(self):
     return gen_dataset_ops.sparse_tensor_slice_dataset(
@@ -1939,6 +1918,9 @@ class DatasetStructure(structure_lib.Structure):
   def _to_tensor_list(self, value):
     return [value._as_variant_tensor()]  # pylint: disable=protected-access
 
+  def _to_batched_tensor_list(self, value):
+    raise NotImplementedError("Unbatching for `tf.data.Dataset` objects.")
+
   def _from_tensor_list(self, flat_value):
     if (len(flat_value) != 1 or flat_value[0].dtype != dtypes.variant or
         not flat_value[0].shape.is_compatible_with(tensor_shape.scalar())):
@@ -1965,6 +1947,9 @@ class DatasetStructure(structure_lib.Structure):
 
   def _batch(self, batch_size):
     raise NotImplementedError("Batching for `tf.data.Dataset` objects.")
+
+  def _unbatch(self):
+    raise NotImplementedError("Unbatching for `tf.data.Dataset` objects.")
 
 
 # pylint: disable=protected-access
@@ -2156,25 +2141,14 @@ class _GeneratorDataset(DatasetSource):
         destroyed. The return value is ignored.
     """
     super(_GeneratorDataset, self).__init__()
-    # These members will be initialized by `tf_init_func`.
-    self._state_classes = None
-    self._state_shapes = None
-    self._state_types = None
-
     self._init_args = init_args
 
-    init_args_classes = sparse.get_classes(init_args)
-    init_args_shapes = nest.pack_sequence_as(
-        init_args, [t.get_shape() for t in nest.flatten(init_args)])
-    init_args_types = nest.pack_sequence_as(
-        init_args, [t.dtype for t in nest.flatten(init_args)])
+    self._init_structure = structure_lib.Structure.from_value(init_args)
 
     self._init_func = StructuredFunctionWrapper(
         init_func,
         self._transformation_name(),
-        input_classes=init_args_classes,
-        input_shapes=init_args_shapes,
-        input_types=init_args_types)
+        input_structure=self._init_structure)
 
     self._next_func = StructuredFunctionWrapper(
         next_func,
@@ -2188,7 +2162,7 @@ class _GeneratorDataset(DatasetSource):
 
   def _as_variant_tensor(self):
     return gen_dataset_ops.generator_dataset(
-        nest.flatten(self._init_args)
+        self._init_structure._to_tensor_list(self._init_args)  # pylint: disable=protected-access
         + self._init_func.function.captured_inputs,
         self._next_func.function.captured_inputs,
         self._finalize_func.function.captured_inputs,

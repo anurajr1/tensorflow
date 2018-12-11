@@ -78,11 +78,16 @@ def identity(input, name=None):  # pylint: disable=redefined-builtin
       return input._copy()  # pylint: disable=protected-access
     return input
   else:
-    return gen_array_ops.identity(input, name=name)
+    ret = gen_array_ops.identity(input, name=name)
+    # Propagate handle data for happier shape inference for resource variables.
+    if hasattr(input, "_handle_data"):
+      ret._handle_data = input._handle_data  # pylint: disable=protected-access
+    return ret
 
 
 # pylint: disable=redefined-builtin,protected-access
 @tf_export(v1=["expand_dims"])
+@dispatch.add_dispatch_support
 @deprecation.deprecated_args(None, "Use the `axis` argument instead", "dim")
 def expand_dims(input, axis=None, name=None, dim=None):
   """Inserts a dimension of 1 into a tensor's shape.
@@ -2652,7 +2657,7 @@ def required_space_to_batch_paddings(input_shape,
     return result_paddings, result_crops
 
 
-@tf_export("nn.space_to_batch", v1=["nn.space_to_batch", "space_to_batch"])
+@tf_export(v1=["nn.space_to_batch", "space_to_batch"])
 @deprecation.deprecated_endpoints("space_to_batch")
 def space_to_batch(input, paddings, block_size, name=None):  # pylint: disable=redefined-builtin
   result = space_to_batch_nd(
@@ -2665,6 +2670,14 @@ def space_to_batch(input, paddings, block_size, name=None):  # pylint: disable=r
 
 
 space_to_batch.__doc__ = gen_array_ops.space_to_batch.__doc__
+
+
+@tf_export("space_to_batch", "nn.space_to_batch", v1=[])
+def space_to_batch_v2(input, block_shape, paddings, name=None):  # pylint: disable=redefined-builtin
+  return space_to_batch_nd(input, block_shape, paddings, name)
+
+
+space_to_batch_v2.__doc__ = gen_array_ops.space_to_batch_nd.__doc__
 
 
 @tf_export(v1=["nn.space_to_depth", "space_to_depth"])
@@ -3244,6 +3257,7 @@ reverse_sequence_v2.__doc__ = deprecation.rewrite_argument_docstring(
 
 
 @tf_export(v1=["gather"])
+@dispatch.add_dispatch_support
 def gather(params, indices, validate_indices=None, name=None, axis=0):
   del validate_indices
   if axis != 0:
