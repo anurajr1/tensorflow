@@ -66,6 +66,21 @@ class documentation.
 @@RaggedTensorDynamicShape
 @@broadcast_to
 @@broadcast_dynamic_shape
+
+<!-- String ops -->
+@@unicode_decode
+@@unicode_decode_with_offsets
+@@unicode_split
+@@unicode_split_with_offsets
+
+<!-- Modules -->
+@@ragged_dispatch
+@@ragged_factory_ops
+@@ragged_operators
+@@ragged_string_ops
+@@ragged_tensor
+@@ragged_tensor_value
+@@ragged_util
 """
 
 from __future__ import absolute_import
@@ -73,8 +88,12 @@ from __future__ import division
 from __future__ import print_function
 
 from tensorflow.python.ops.ragged import ragged_dispatch
+from tensorflow.python.ops.ragged import ragged_factory_ops
 from tensorflow.python.ops.ragged import ragged_operators
 from tensorflow.python.ops.ragged import ragged_string_ops
+from tensorflow.python.ops.ragged import ragged_tensor
+from tensorflow.python.ops.ragged import ragged_tensor_value
+from tensorflow.python.ops.ragged import ragged_util
 
 from tensorflow.python.ops.ragged.ragged_array_ops import batch_gather
 from tensorflow.python.ops.ragged.ragged_array_ops import boolean_mask
@@ -115,6 +134,11 @@ from tensorflow.python.ops.ragged.ragged_math_ops import segment_prod
 from tensorflow.python.ops.ragged.ragged_math_ops import segment_sqrt_n
 from tensorflow.python.ops.ragged.ragged_math_ops import segment_sum
 
+from tensorflow.python.ops.ragged.ragged_string_ops import unicode_decode
+from tensorflow.python.ops.ragged.ragged_string_ops import unicode_decode_with_offsets
+from tensorflow.python.ops.ragged.ragged_string_ops import unicode_split
+from tensorflow.python.ops.ragged.ragged_string_ops import unicode_split_with_offsets
+
 from tensorflow.python.ops.ragged.ragged_tensor import convert_to_tensor_or_ragged_tensor
 from tensorflow.python.ops.ragged.ragged_tensor import is_ragged
 from tensorflow.python.ops.ragged.ragged_tensor import RaggedTensor
@@ -133,7 +157,7 @@ from tensorflow.python.util import all_util as _all_util
 
 
 # Register OpDispatchers that override standard TF ops to work w/ RaggedTensors.
-__doc__ += ragged_dispatch.register_dispatchers()  # pylint: disable=redefined-builtin
+__doc__ += ragged_dispatch.ragged_op_list()  # pylint: disable=redefined-builtin
 
 # Any symbol that is not referenced (with "@@name") in the module docstring
 # above will be removed.

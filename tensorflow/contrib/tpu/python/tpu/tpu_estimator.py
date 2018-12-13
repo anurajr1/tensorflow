@@ -31,6 +31,7 @@ import six
 from six.moves import queue as Queue  # pylint: disable=redefined-builtin
 from six.moves import xrange  # pylint: disable=redefined-builtin
 
+from tensorflow.contrib.tpu.proto import compilation_result_pb2 as tpu_compilation_result
 from tensorflow.contrib.tpu.python.tpu import tensor_tracer
 from tensorflow.contrib.tpu.python.ops import tpu_ops
 from tensorflow.contrib.tpu.python.tpu import error_handling
@@ -422,6 +423,7 @@ class TPUInfeedOutfeedSessionHook(session_run_hook.SessionRunHook):
                ctx,
                enqueue_ops,
                dequeue_ops,
+               tpu_compile_op,
                run_infeed_loop_on_coordinator=True,
                rendezvous=None,
                master=None,
@@ -439,6 +441,7 @@ class TPUInfeedOutfeedSessionHook(session_run_hook.SessionRunHook):
     self._feed_error = None
     self._finished = False
     self._should_initialize_tpu = True
+    self._tpu_compile_op = tpu_compile_op
 
   def begin(self):
     logging.info('TPU job name %s', self._master_job)
@@ -487,6 +490,15 @@ class TPUInfeedOutfeedSessionHook(session_run_hook.SessionRunHook):
   def _create_infeed_controller(self, name, target, args):
     return _OpQueueContext(name=name, target=target, args=args)
 
+  def _assertCompilationSucceeded(self, result, coord):
+    proto = tpu_compilation_result.CompilationResultProto()
+    proto.ParseFromString(result)
+    if proto.status_error_message:
+      logging.error('Compilation failed: {}'.format(proto.status_error_message))
+      coord.request_stop()
+    else:
+      logging.info('Compilation succeeded')
+
   def after_create_session(self, session, coord):
     if self._should_initialize_tpu:
       logging.info('Init TPU system')
@@ -499,6 +511,10 @@ class TPUInfeedOutfeedSessionHook(session_run_hook.SessionRunHook):
 
     session.run(self._init_ops,
                 options=config_pb2.RunOptions(timeout_in_ms=5 * 60 * 1000))
+
+    if os.environ.get('TPU_SPLIT_COMPILE_AND_EXECUTE', '') == '1':
+      logging.info('Compiling user program: this may take a while...')
+      self._assertCompilationSucceeded(session.run(self._tpu_compile_op), coord)
 
     self._infeed_controller = self._create_infeed_controller(
         name='InfeedController', target=self._run_infeed, args=(session,))
@@ -540,12 +556,13 @@ class TPUInfeedOutfeedSessionHook(session_run_hook.SessionRunHook):
 
 class TPUInfeedOutfeedSessionHookForPrediction(TPUInfeedOutfeedSessionHook):
 
-  def __init__(self, ctx, enqueue_ops, dequeue_ops, rendezvous=None,
-               master=None, session_config=None):
+  def __init__(self, ctx, enqueue_ops, dequeue_ops, tpu_compile_op,
+               rendezvous=None, master=None, session_config=None):
     super(TPUInfeedOutfeedSessionHookForPrediction, self).__init__(
         ctx,
         enqueue_ops,
         dequeue_ops,
+        tpu_compile_op=tpu_compile_op,
         run_infeed_loop_on_coordinator=False,
         rendezvous=rendezvous,
         master=master,
@@ -2545,7 +2562,7 @@ class TPUEstimator(estimator_lib.Estimator):
             graph.add_to_collection(_TPU_ENQUEUE_OPS, enqueue_op)
 
         if mode == model_fn_lib.ModeKeys.TRAIN:
-          loss, host_call, scaffold, training_hooks = (
+          compile_op, loss, host_call, scaffold, training_hooks = (
               _train_on_tpu_system(ctx, model_fn_wrapper, dequeue_fn))
           host_ops = host_call.create_tpu_hostcall()
           if host_ops is None:
@@ -2580,6 +2597,7 @@ class TPUEstimator(estimator_lib.Estimator):
                   ctx,
                   enqueue_ops,
                   host_ops,
+                  tpu_compile_op=compile_op,
                   run_infeed_loop_on_coordinator=(
                       run_infeed_loop_on_coordinator),
                   rendezvous=self._rendezvous[mode],
@@ -2637,8 +2655,8 @@ class TPUEstimator(estimator_lib.Estimator):
               scaffold=scaffold)
 
         if mode == model_fn_lib.ModeKeys.EVAL:
-          total_loss, host_calls, scaffold, eval_hooks = _eval_on_tpu_system(
-              ctx, model_fn_wrapper, dequeue_fn)
+          compile_op, total_loss, host_calls, scaffold, eval_hooks = (
+              _eval_on_tpu_system(ctx, model_fn_wrapper, dequeue_fn))
           iterations_per_loop_var = _create_or_get_iterations_per_loop()
           mean_loss = math_ops.div(
               total_loss,
@@ -2685,6 +2703,7 @@ class TPUEstimator(estimator_lib.Estimator):
                   ctx,
                   enqueue_ops,
                   eval_update_ops + host_ops,
+                  tpu_compile_op=compile_op,
                   run_infeed_loop_on_coordinator=(
                       run_infeed_loop_on_coordinator),
                   rendezvous=self._rendezvous[mode],
@@ -2705,7 +2724,7 @@ class TPUEstimator(estimator_lib.Estimator):
         # Predict
         assert mode == model_fn_lib.ModeKeys.PREDICT
 
-        (dummy_predict_op, host_calls,
+        (compile_op, dummy_predict_op, host_calls,
          scaffold, prediction_hooks) = _predict_on_tpu_system(
              ctx, model_fn_wrapper, dequeue_fn)
         with ops.control_dependencies([dummy_predict_op]):
@@ -2762,6 +2781,7 @@ class TPUEstimator(estimator_lib.Estimator):
             _StoppingPredictHook(scalar_stopping_signal),
             TPUInfeedOutfeedSessionHookForPrediction(
                 ctx, enqueue_ops, host_ops, rendezvous=self._rendezvous[mode],
+                tpu_compile_op=compile_op,
                 master=self._config.master,
                 session_config=self._session_config),
         ] + input_hooks
@@ -2860,15 +2880,16 @@ def _eval_on_tpu_system(ctx, model_fn_wrapper, dequeue_fn):
     return training_loop.repeat(iterations_per_loop_var, single_tpu_eval_step,
                                 [_ZERO_LOSS])
 
-  (loss,) = tpu.shard(
+  (compile_op, loss,) = tpu.split_compile_and_shard(
       multi_tpu_eval_steps_on_single_shard,
       inputs=[],
       num_shards=ctx.num_replicas,
       outputs_from_all_shards=False,
       device_assignment=ctx.device_assignment)
 
+  loss = loss[0]
   scaffold = _get_scaffold(captured_scaffold_fn)
-  return loss, host_calls, scaffold, captured_eval_hooks.get()
+  return compile_op, loss, host_calls, scaffold, captured_eval_hooks.get()
 
 
 def _train_on_tpu_system(ctx, model_fn_wrapper, dequeue_fn):
@@ -2883,15 +2904,16 @@ def _train_on_tpu_system(ctx, model_fn_wrapper, dequeue_fn):
     return training_loop.repeat(iterations_per_loop_var, single_tpu_train_step,
                                 [_INITIAL_LOSS])
 
-  (loss,) = tpu.shard(
+  (compile_op, loss,) = tpu.split_compile_and_shard(
       multi_tpu_train_steps_on_single_shard,
       inputs=[],
       num_shards=ctx.num_replicas,
       outputs_from_all_shards=False,
       device_assignment=ctx.device_assignment)
 
+  loss = loss[0]
   scaffold = _get_scaffold(captured_scaffold_fn)
-  return loss, host_call, scaffold, captured_training_hooks.get()
+  return compile_op, loss, host_call, scaffold, captured_training_hooks.get()
 
 
 def _predict_on_tpu_system(ctx, model_fn_wrapper, dequeue_fn):
@@ -2911,15 +2933,17 @@ def _predict_on_tpu_system(ctx, model_fn_wrapper, dequeue_fn):
         cond, single_tpu_predict_step, inputs=inputs, name=b'loop')
     return outputs
 
-  (dummy_predict_op,) = tpu.shard(
+  (compile_op, dummy_predict_op,) = tpu.split_compile_and_shard(
       multi_tpu_predict_steps_on_single_shard,
       inputs=[],
       num_shards=ctx.num_replicas,
       outputs_from_all_shards=False,
       device_assignment=ctx.device_assignment)
 
+  dummy_predict_op = dummy_predict_op[0]
   scaffold = _get_scaffold(captured_scaffold_fn)
-  return dummy_predict_op, host_calls, scaffold, captured_predict_hooks.get()
+  return (compile_op, dummy_predict_op, host_calls, scaffold,
+          captured_predict_hooks.get())
 
 
 def _wrap_computation_in_while_loop(device, op_fn):
