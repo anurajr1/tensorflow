@@ -67,7 +67,7 @@ def _deduplicate_indexed_slices(values, indices):
 
 
 @six.add_metaclass(abc.ABCMeta)
-@tf_export("keras.optimizers.Optimizer")
+@tf_export("keras.optimizers.Optimizer", v1=[])
 class OptimizerV2(checkpointable.CheckpointableBase):
   """Updated base class for optimizers.
 
@@ -334,8 +334,8 @@ class OptimizerV2(checkpointable.CheckpointableBase):
       reduced_grads = merge_grads(grads_and_vars)
       grads_and_vars = zip(reduced_grads, var_list)
 
+    self._prepare()
     with ops.init_scope():
-      self._prepare()
       self._create_slots(var_list)
     update_ops = []
 

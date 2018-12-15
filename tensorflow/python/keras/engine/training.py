@@ -554,16 +554,23 @@ class Model(Network):
     if self._run_eagerly is True and not context.executing_eagerly():
       raise ValueError('You can only set `run_eagerly=True` if eager execution '
                        'is enabled.')
-    if self._static_graph_friendly:
+    if not self.dynamic:
       if self._run_eagerly is None:
         return False
       else:
         return self._run_eagerly
     else:
+      if not context.executing_eagerly():
+        raise ValueError('Your model contains layers that can only be '
+                         'successfully run in eager execution (layers '
+                         'constructed with `dynamic=True`). '
+                         'You must enable eager execution with '
+                         '`tf.enable_eager_execution()`.')
       if self._run_eagerly is False:
         # TODO(fchollet): consider using py_func to enable this.
         raise ValueError('Your model contains layers that can only be '
-                         'successfully run in eager execution. '
+                         'successfully run in eager execution (layers '
+                         'constructed with `dynamic=True`). '
                          'You cannot set `run_eagerly=False`.')
       return context.executing_eagerly()
 
@@ -886,6 +893,7 @@ class Model(Network):
                verbose=1,
                sample_weight=None,
                steps=None,
+               callbacks=None,
                max_queue_size=10,
                workers=1,
                use_multiprocessing=False):
@@ -936,6 +944,9 @@ class Model(Network):
             Total number of steps (batches of samples)
             before declaring the evaluation round finished.
             Ignored with the default value of `None`.
+        callbacks: List of `keras.callbacks.Callback` instances.
+            List of callbacks to apply during evaluation.
+            See [callbacks](/api_docs/python/tf/keras/callbacks).
         max_queue_size: Integer. Used for generator or `keras.utils.Sequence`
             input only. Maximum size for the generator queue.
             If unspecified, `max_queue_size` will default to 10.
@@ -995,7 +1006,8 @@ class Model(Network):
           steps=steps,
           batch_size=batch_size,
           verbose=verbose,
-          workers=0)
+          workers=0,
+          callbacks=callbacks)
     elif distributed_training_utils.is_tpu_strategy(
         self._distribution_strategy):
       return training_distributed.experimental_test_loop(
@@ -1008,13 +1020,15 @@ class Model(Network):
           sample_weights=sample_weights,
           batch_size=batch_size,
           verbose=verbose,
-          steps=steps)
+          steps=steps,
+          callbacks=callbacks)
 
   def predict(self,
               x,
               batch_size=None,
               verbose=0,
               steps=None,
+              callbacks=None,
               max_queue_size=10,
               workers=1,
               use_multiprocessing=False):
@@ -1041,6 +1055,9 @@ class Model(Network):
         steps: Total number of steps (batches of samples)
             before declaring the prediction round finished.
             Ignored with the default value of `None`.
+        callbacks: List of `keras.callbacks.Callback` instances.
+            List of callbacks to apply during prediction.
+            See [callbacks](/api_docs/python/tf/keras/callbacks).
         max_queue_size: Integer. Used for generator or `keras.utils.Sequence`
             input only. Maximum size for the generator queue.
             If unspecified, `max_queue_size` will default to 10.
@@ -1103,14 +1120,20 @@ class Model(Network):
           steps=steps,
           batch_size=batch_size,
           verbose=verbose,
-          workers=0)
+          workers=0,
+          callbacks=callbacks)
     elif distributed_training_utils.is_tpu_strategy(
         self._distribution_strategy):
       return training_distributed.experimental_predict_loop(
           self, x, verbose=verbose, steps=steps)
     else:
       return training_arrays.predict_loop(
-          self, x, batch_size=batch_size, verbose=verbose, steps=steps)
+          self,
+          x,
+          batch_size=batch_size,
+          verbose=verbose,
+          steps=steps,
+          callbacks=callbacks)
 
   def reset_metrics(self):
     """Resets the state of metrics."""
@@ -1292,6 +1315,11 @@ class Model(Network):
       elif isinstance(inputs, collections.Sequence):
         inputs = [
             ops.convert_to_tensor(val, dtype=K.floatx()) for val in inputs]
+
+        # Unwrap lists with only one input, as we do when training on batch
+        if len(inputs) == 1:
+          inputs = inputs[0]
+
       return self(inputs)  # pylint: disable=not-callable
 
     self._make_predict_function()
@@ -1428,6 +1456,7 @@ class Model(Network):
   def evaluate_generator(self,
                          generator,
                          steps=None,
+                         callbacks=None,
                          max_queue_size=10,
                          workers=1,
                          use_multiprocessing=False,
@@ -1447,6 +1476,9 @@ class Model(Network):
             to yield from `generator` before stopping.
             Optional for `Sequence`: if unspecified, will use
             the `len(generator)` as a number of steps.
+        callbacks: List of `keras.callbacks.Callback` instances.
+            List of callbacks to apply during evaluation.
+            See [callbacks](/api_docs/python/tf/keras/callbacks).
         max_queue_size: maximum size for the generator queue
         workers: Integer. Maximum number of processes to spin up
             when using process-based threading.
@@ -1482,11 +1514,13 @@ class Model(Network):
         max_queue_size=max_queue_size,
         workers=workers,
         use_multiprocessing=use_multiprocessing,
-        verbose=verbose)
+        verbose=verbose,
+        callbacks=callbacks)
 
   def predict_generator(self,
                         generator,
                         steps=None,
+                        callbacks=None,
                         max_queue_size=10,
                         workers=1,
                         use_multiprocessing=False,
@@ -1504,6 +1538,9 @@ class Model(Network):
             to yield from `generator` before stopping.
             Optional for `Sequence`: if unspecified, will use
             the `len(generator)` as a number of steps.
+        callbacks: List of `keras.callbacks.Callback` instances.
+            List of callbacks to apply during prediction.
+            See [callbacks](/api_docs/python/tf/keras/callbacks).
         max_queue_size: Maximum size for the generator queue.
         workers: Integer. Maximum number of processes to spin up
             when using process-based threading.
@@ -1533,7 +1570,8 @@ class Model(Network):
         max_queue_size=max_queue_size,
         workers=workers,
         use_multiprocessing=use_multiprocessing,
-        verbose=verbose)
+        verbose=verbose,
+        callbacks=callbacks)
 
   def _get_callback_model(self):
     """Returns the Callback Model for this Model."""
@@ -1632,10 +1670,12 @@ class Model(Network):
 
   def _cache_output_metric_attributes(self, metrics, weighted_metrics):
     """Caches metric name and function attributes for every model output."""
-    output_shapes = [
-        None if output is None else output.get_shape().as_list()
-        for output in self.outputs
-    ]
+    output_shapes = []
+    for output in self.outputs:
+      if output is None or output.shape.rank is None:
+        output_shapes.append(None)
+      else:
+        output_shapes.append(output.shape.as_list())
     self._per_output_metrics = training_utils.collect_per_output_metric_info(
         metrics, self.output_names, output_shapes, self.loss_functions)
     self._per_output_weighted_metrics = \
@@ -2220,12 +2260,9 @@ class Model(Network):
     # If input data is a dataset iterator in graph mode or if it is an eager
     # iterator and only one batch of samples is required, we fetch the data
     # tensors from the iterator and then standardize them.
-    if is_x_iterator or is_x_eager_iterator:
+    if is_x_iterator:
       try:
-        if is_x_iterator:
-          next_element = self._get_iterator_get_next_tensors(x)
-        else:
-          next_element = x.get_next()
+        next_element = self._get_iterator_get_next_tensors(x)
       except errors.OutOfRangeError:
         raise RuntimeError('Your dataset iterator ran out of data; '
                            'Make sure that your dataset can generate '
@@ -2278,15 +2315,14 @@ class Model(Network):
       # Build the model using the retrieved inputs (value or symbolic).
       # If values or generated from a dataset, then in symbolic-mode
       # placeholders will be created to match the value shapes.
-      if not self.inputs:
-        is_build_called = True
-        if is_x_iterator:
-          cast_inputs = nest.map_structure(lambda v: v.shape, x)
-        elif training_utils.has_tensors(x):
-          cast_inputs = training_utils.cast_if_floating_dtype(x)
-        else:
-          cast_inputs = x
-        self._set_inputs(cast_inputs)
+      is_build_called = True
+      if is_x_iterator:
+        cast_inputs = nest.map_structure(lambda v: v.shape, x)
+      elif training_utils.has_tensors(x):
+        cast_inputs = training_utils.cast_if_floating_dtype(x)
+      else:
+        cast_inputs = x
+      self._set_inputs(cast_inputs)
     else:
       dict_inputs = isinstance(self.inputs, dict)
     if dict_inputs and context.executing_eagerly():
@@ -2516,19 +2552,29 @@ class Model(Network):
 
     for k, v in model_inputs.as_dict():
       if K.is_placeholder(v):
-        self._feed_inputs.append(v)
         self._feed_input_names.append(k)
+        self._feed_inputs.append(v)
         self._feed_input_shapes.append(K.int_shape(v))
 
     # TODO(fchollet): consider calling `_maybe_build` before calling the model.
-
     if outputs is None:
-      # Obtain symbolic outputs by calling the model.
-      with K.get_graph().as_default():
-        if self._expects_training_arg:
-          outputs = self.call(inputs, training=training)
-        else:
-          outputs = self.call(inputs)
+      if not self._dynamic:
+        # The network may include dynamic layers but its `call`
+        # itself isn't dynamic.
+        # Obtain symbolic outputs by calling the model.
+        with K.get_graph().as_default():
+          if self._expects_training_arg:
+            outputs = self.call(inputs, training=training)
+          else:
+            outputs = self.call(inputs)
+      else:
+        # Case: network's `call` is dynamic.
+        try:
+          outputs = self._symbolic_call(inputs)
+        except NotImplementedError:
+          # Static shape inference was not implemented for this dynamic net.
+          # Do not specify symbolic outputs.
+          outputs = None
 
     outputs = nest.flatten(outputs)
     self.outputs = outputs

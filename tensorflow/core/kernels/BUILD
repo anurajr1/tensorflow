@@ -3714,7 +3714,6 @@ NN_DEPS = [
     ":bounds_check",
     ":conv_2d",
     ":eigen_contraction_kernel",
-    ":fused_batch_norm_util_gpu",
     ":ops_util",
     ":pooling_ops",
     "//tensorflow/core:framework",
@@ -3971,19 +3970,6 @@ tf_kernel_library(
         "//third_party/eigen3",
     ],
     alwayslink = 1,
-)
-
-tf_kernel_library(
-    name = "fused_batch_norm_util",
-    gpu_srcs = [
-        "fused_batch_norm_op.h",
-        "fused_batch_norm_op.cu.cc",
-    ],
-    deps = [
-        "//tensorflow/core:framework",
-        "//tensorflow/core:lib",
-        "//third_party/eigen3",
-    ],
 )
 
 cc_library(

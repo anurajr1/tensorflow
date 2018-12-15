@@ -249,10 +249,13 @@ class PolymorphicFunction(object):
   def _defun_with_scope(self, scope):
     """Creates a defun wrapped inside a variable creator scope."""
 
+    weak_wrapped_fn = None
     def wrapped_fn(*args, **kwds):
       with variable_scope.variable_creator_scope(scope):
-        # __wrapped__ allows AutoGraph to swap in a converted function.
-        return wrapped_fn.__wrapped__(*args, **kwds)
+        # __wrapped__ allows AutoGraph to swap in a converted function. We give
+        # the function a weak reference to itself to avoid a reference cycle.
+        return weak_wrapped_fn().__wrapped__(*args, **kwds)
+    weak_wrapped_fn = weakref.ref(wrapped_fn)
 
     # TODO(mdan): Pipe self._experimental_autograph_options through.
     return function_lib.defun(
@@ -263,21 +266,22 @@ class PolymorphicFunction(object):
   def _initialize(self, args, kwds, add_initializers_to=None):
     """Initializes, on the first call."""
 
-    self._created_variables = []
+    created_variables = []
 
     def variable_capturing_scope(unused_next_creator, **kwds):
       """Creates UnliftedInitializerVariables and saves references to them."""
       v = UnliftedInitializerVariable(
           add_initializers_to=add_initializers_to, **kwds)
-      self._created_variables.append(weakref.ref(v))
+      created_variables.append(weakref.ref(v))
       return v
 
+    self._created_variables = created_variables
     self._stateful_fn = self._defun_with_scope(variable_capturing_scope)
     self._stateful_fn._name = self._name  # pylint: disable=protected-access
-
     # Force the definition of the function for these arguments
     self._concrete_stateful_fn = (
-        self._stateful_fn._get_concrete_function_internal(*args, **kwds))  # pylint: disable=protected-access
+        self._stateful_fn._get_concrete_function_internal_garbage_collected(  # pylint: disable=protected-access
+            *args, **kwds))
 
     def invalid_creator_scope(*unused_args, **unused_kwds):
       """Disables variable creation."""
