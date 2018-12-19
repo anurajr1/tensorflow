@@ -81,6 +81,7 @@ py_library(
     visibility = [
         "//tensorflow:__pkg__",
         "//tensorflow/python/estimator:__subpackages__",
+        "//tensorflow/python/keras:__subpackages__",
         "//tensorflow/python/tools:__pkg__",
         "//tensorflow/python/tools/api/generator:__pkg__",
         "//tensorflow/tools/api/tests:__pkg__",
@@ -150,6 +151,7 @@ py_library(
         "//tensorflow/python/distribute",
         "//tensorflow/python/distribute:estimator_training",
         "//tensorflow/python/eager:def_function",
+        "//tensorflow/python/eager:remote",
         "//tensorflow/python/feature_column:feature_column_py",
         "//tensorflow/python/keras",
         "//tensorflow/python/ops/distributions",
@@ -4112,6 +4114,7 @@ tf_py_wrap_cc(
         ":tf_session_helper",
         "//third_party/python_runtime:headers",
         "//tensorflow/c:c_api",
+        "//tensorflow/c:c_api_experimental",
         "//tensorflow/c:checkpoint_reader",
         "//tensorflow/c:python_api",
         "//tensorflow/c:tf_status_helper",

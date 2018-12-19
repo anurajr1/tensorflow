@@ -1,4 +1,4 @@
-/* Copyright 2018 The TensorFlow Authors. All Rights Reserved.
+/* Copyright 2017 The TensorFlow Authors. All Rights Reserved.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -13,22 +13,19 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include "tensorflow/core/platform/logger.h"
-
-#include "tensorflow/core/platform/logging.h"
+#include "tensorflow/core/framework/common_shape_fns.h"
+#include "tensorflow/core/framework/op.h"
+#include "tensorflow/core/framework/shape_inference.h"
 
 namespace tensorflow {
 
-Logger* Logger::Singleton() {
-  class DefaultLogger : public Logger {
-   private:
-    void DoLogProto(google::protobuf::Any* proto) override {
-      VLOG(2) << proto->ShortDebugString();
-    }
-    void DoFlush() override {}
-  };
-  static Logger* instance = new DefaultLogger();
-  return instance;
-}
+REGISTER_OP("TPUPartitionedCall")
+    .Input("args: Tin")
+    .Input("device_ordinal: int32")
+    .Output("output: Tout")
+    .Attr("Tin: list(type) >= 0")
+    .Attr("Tout: list(type) >= 0")
+    .Attr("f: func")
+    .SetShapeFn(shape_inference::UnknownShape);
 
 }  // namespace tensorflow

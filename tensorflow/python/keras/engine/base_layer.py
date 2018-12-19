@@ -51,11 +51,11 @@ from tensorflow.python.util import function_utils
 from tensorflow.python.util import nest
 from tensorflow.python.util import tf_decorator
 from tensorflow.python.util import tf_inspect
-from tensorflow.python.util.tf_export import tf_export
+from tensorflow.python.util.tf_export import keras_export
 from tensorflow.tools.docs import doc_controls
 
 
-@tf_export('keras.layers.Layer')
+@keras_export('keras.layers.Layer')
 class Layer(checkpointable.CheckpointableBase):
   """Base layer class.
 
@@ -1643,6 +1643,12 @@ class Layer(checkpointable.CheckpointableBase):
       return list(itertools.chain.from_iterable(
           getattr(layer, attribute) for layer in self._layers))
     return []
+
+  # This is a hack so that the is_layer (within
+  # training/checkpointable/layer_utils.py) check doesn't get the weights attr.
+  # TODO(b/110718070): Remove when fixed.
+  def _is_layer(self):
+    return True
 
 
 class Node(object):

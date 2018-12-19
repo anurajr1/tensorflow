@@ -68,7 +68,7 @@ class Aggregator(object):
     Arguments:
       batch_outs: A list of batch-level outputs.
     """
-    NotImplementedError('Must be implemented in subclasses.')
+    raise NotImplementedError('Must be implemented in subclasses.')
 
   @abc.abstractmethod
   def aggregate(self, batch_outs, batch_start=None, batch_end=None):
@@ -81,12 +81,12 @@ class Aggregator(object):
       batch_end: The end index of this batch. Always `None` if `use_steps` is
         `True`.
     """
-    NotImplementedError('Must be implemented in subclasses.')
+    raise NotImplementedError('Must be implemented in subclasses.')
 
   @abc.abstractmethod
   def finalize(self):
     """Prepares the total results to be returned."""
-    NotImplementedError('Must be implemented in subclasses.')
+    raise NotImplementedError('Must be implemented in subclasses.')
 
 
 class MetricsAggregator(Aggregator):
@@ -1229,7 +1229,8 @@ def trace_model_call(model, input_signature=None):
     # all tensor inputs must be passed in as the first argument.
     input_signature = [input_specs] if len(input_specs) > 1 else input_specs
 
-  @def_function.function(input_signature=input_signature)
+  # TODO(mdan): Should the model's call be autographed by default?
+  @def_function.function(input_signature=input_signature, autograph=False)
   def _wrapped_model(*args):
     """A concrete tf.function that wraps the model's call function."""
     # When given a single input, Keras models will call the model on the tensor
@@ -1243,4 +1244,3 @@ def trace_model_call(model, input_signature=None):
     return {name: output for name, output in zip(output_names, outputs_list)}
 
   return _wrapped_model
-

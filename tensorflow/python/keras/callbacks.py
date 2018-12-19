@@ -43,7 +43,7 @@ from tensorflow.python.ops import variables
 from tensorflow.python.platform import tf_logging as logging
 from tensorflow.python.summary import summary as tf_summary
 from tensorflow.python.training import saver
-from tensorflow.python.util.tf_export import tf_export
+from tensorflow.python.util.tf_export import keras_export
 
 try:
   import requests
@@ -194,6 +194,8 @@ class CallbackList(object):
 
   def _call_batch_hook(self, mode, hook, batch, logs=None):
     """Helper function for all batch_{begin | end} methods."""
+    if not self.callbacks:
+      return
     hook_name = 'on_{mode}_batch_{hook}'.format(mode=mode, hook=hook)
     if hook == 'begin':
       self._t_enter_batch = time.time()
@@ -391,7 +393,7 @@ class CallbackList(object):
     return iter(self.callbacks)
 
 
-@tf_export('keras.callbacks.Callback')
+@keras_export('keras.callbacks.Callback')
 class Callback(object):
   """Abstract base class used to build new callbacks.
 
@@ -594,7 +596,7 @@ class Callback(object):
     """
 
 
-@tf_export('keras.callbacks.BaseLogger')
+@keras_export('keras.callbacks.BaseLogger')
 class BaseLogger(Callback):
   """Callback that accumulates epoch averages of metrics.
 
@@ -643,7 +645,7 @@ class BaseLogger(Callback):
             logs[k] = self.totals[k] / self.seen
 
 
-@tf_export('keras.callbacks.TerminateOnNaN')
+@keras_export('keras.callbacks.TerminateOnNaN')
 class TerminateOnNaN(Callback):
   """Callback that terminates training when a NaN loss is encountered.
   """
@@ -657,7 +659,7 @@ class TerminateOnNaN(Callback):
         self.model.stop_training = True
 
 
-@tf_export('keras.callbacks.ProgbarLogger')
+@keras_export('keras.callbacks.ProgbarLogger')
 class ProgbarLogger(Callback):
   """Callback that prints metrics to stdout.
 
@@ -737,7 +739,7 @@ class ProgbarLogger(Callback):
       self.progbar.update(self.seen, self.log_values)
 
 
-@tf_export('keras.callbacks.History')
+@keras_export('keras.callbacks.History')
 class History(Callback):
   """Callback that records events into a `History` object.
 
@@ -757,7 +759,7 @@ class History(Callback):
       self.history.setdefault(k, []).append(v)
 
 
-@tf_export('keras.callbacks.ModelCheckpoint')
+@keras_export('keras.callbacks.ModelCheckpoint')
 class ModelCheckpoint(Callback):
   """Save the model after every epoch.
 
@@ -861,7 +863,7 @@ class ModelCheckpoint(Callback):
           self.model.save(filepath, overwrite=True)
 
 
-@tf_export('keras.callbacks.EarlyStopping')
+@keras_export('keras.callbacks.EarlyStopping')
 class EarlyStopping(Callback):
   """Stop training when a monitored quantity has stopped improving.
 
@@ -972,7 +974,7 @@ class EarlyStopping(Callback):
     return monitor_value
 
 
-@tf_export('keras.callbacks.RemoteMonitor')
+@keras_export('keras.callbacks.RemoteMonitor')
 class RemoteMonitor(Callback):
   """Callback used to stream events to a server.
 
@@ -1028,7 +1030,7 @@ class RemoteMonitor(Callback):
                       'root server at ' + str(self.root))
 
 
-@tf_export('keras.callbacks.LearningRateScheduler')
+@keras_export('keras.callbacks.LearningRateScheduler')
 class LearningRateScheduler(Callback):
   """Learning rate scheduler.
 
@@ -1065,7 +1067,7 @@ class LearningRateScheduler(Callback):
     logs['lr'] = K.get_value(self.model.optimizer.lr)
 
 
-@tf_export('keras.callbacks.TensorBoard')
+@keras_export('keras.callbacks.TensorBoard')
 class TensorBoard(Callback):
   # pylint: disable=line-too-long
   """Tensorboard basic visualizations.
@@ -1448,7 +1450,7 @@ class TensorBoard(Callback):
     self.writer.close()
 
 
-@tf_export('keras.callbacks.ReduceLROnPlateau')
+@keras_export('keras.callbacks.ReduceLROnPlateau')
 class ReduceLROnPlateau(Callback):
   """Reduce learning rate when a metric has stopped improving.
 
@@ -1573,7 +1575,7 @@ class ReduceLROnPlateau(Callback):
     return self.cooldown_counter > 0
 
 
-@tf_export('keras.callbacks.CSVLogger')
+@keras_export('keras.callbacks.CSVLogger')
 class CSVLogger(Callback):
   """Callback that streams epoch results to a csv file.
 
@@ -1666,7 +1668,7 @@ class CSVLogger(Callback):
     self.writer = None
 
 
-@tf_export('keras.callbacks.LambdaCallback')
+@keras_export('keras.callbacks.LambdaCallback')
 class LambdaCallback(Callback):
   r"""Callback for creating simple, custom callbacks on-the-fly.
 

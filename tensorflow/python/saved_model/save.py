@@ -410,7 +410,7 @@ def _map_resources(accessible_objects):
   """
   # TODO(allenl): Handle MirroredVariables and other types of variables which
   # may need special casing.
-  object_map = {}
+  object_map = util.ObjectIdentityDictionary()
   resource_map = {}
   asset_info = _AssetInfo(
       asset_defs=[],
@@ -482,8 +482,9 @@ def _fill_meta_graph_def(meta_graph_def, obj, signature_functions,
   # the exported graph (thus the `to_graph` argument).
   saver = object_saver.freeze(object_map=object_map, to_graph=exported_graph)
 
-  # We must resolve the concrete function to add to MetaGraph while in eager
-  # mode.
+  # We must instantiate and list all concrete functions of polymorphic functions
+  # while in eager mode so they end up added to the graph and can later be used
+  # by the object based saved model.
   concrete_functions = []
   for accessible_object in accessible_objects:
     for function in function_serialization.list_all_polymorphic_functions(
@@ -521,11 +522,20 @@ def _write_object_graph(root, export_dir, asset_file_def_index):
   util.fill_object_graph_proto(checkpointable_objects, node_ids, slot_variables,
                                proto)
 
+  node_ids = util.ObjectIdentityDictionary()
+  for i in range(len(checkpointable_objects)):
+    obj = checkpointable_objects[i]
+    node_ids[obj] = i
+    if resource_variable_ops.is_resource_variable(obj):
+      node_ids[obj.handle] = i
+    elif isinstance(obj, tracking.TrackableAsset):
+      node_ids[obj.asset_path.handle] = i
+
   for obj, obj_proto in zip(checkpointable_objects, proto.nodes):
     _write_object_proto(obj, obj_proto, asset_file_def_index)
 
   function_serialization.add_polymorphic_functions_to_object_graph_proto(
-      checkpointable_objects, proto)
+      checkpointable_objects, proto, node_ids)
 
   extra_asset_dir = os.path.join(
       compat.as_bytes(export_dir),

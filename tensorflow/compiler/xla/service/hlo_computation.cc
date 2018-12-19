@@ -15,8 +15,8 @@ limitations under the License.
 
 #include "tensorflow/compiler/xla/service/hlo_computation.h"
 
-#include <stddef.h>
 #include <algorithm>
+#include <cstddef>
 #include <functional>
 #include <list>
 #include <queue>
@@ -332,7 +332,7 @@ void HloComputation::ComputeInstructionPostOrder(
       dfs_stack.emplace_back(op);
     }
 
-    // Add inputs for send->recv_done dependencies and cross-replica-sum
+    // Add inputs for send->recv_done dependencies and all-reduce
     // dependencies.
     switch (current->opcode()) {
       case HloOpcode::kRecvDone: {
@@ -344,7 +344,7 @@ void HloComputation::ComputeInstructionPostOrder(
         }
         break;
       }
-      case HloOpcode::kCrossReplicaSum: {
+      case HloOpcode::kAllReduce: {
         auto all_reduce_id = current->all_reduce_id();
         if (all_reduce_id) {
           auto it = channel_dependency_map.find(all_reduce_id.value());
@@ -372,7 +372,7 @@ HloComputation::ComputeChannelDependencies() const {
             instruction.get());
         break;
       }
-      case HloOpcode::kCrossReplicaSum: {
+      case HloOpcode::kAllReduce: {
         auto all_reduce_id = instruction->all_reduce_id();
         if (all_reduce_id) {
           auto& dependencies = channel_dependency_map[all_reduce_id.value()];
@@ -396,6 +396,7 @@ std::vector<HloInstruction*> HloComputation::MakeInstructionPostOrder() const {
   post_order.reserve(instruction_count());
   std::vector<HloInstruction*> trace_instructions;
   absl::flat_hash_map<HloInstruction*, VisitState> visited;
+  visited.reserve(instruction_count());
   for (auto& instruction : instructions_) {
     if (instruction->opcode() == HloOpcode::kTrace) {
       // Trace instructions aren't handled by the DFS visitor. Add trace
