@@ -561,7 +561,7 @@ cuda_py_test(
         "//third_party/py/numpy",
         "//tensorflow/python:client_testlib",
     ],
-    shard_count = 4,
+    shard_count = 8,
 )
 
 cuda_py_test(
@@ -838,6 +838,7 @@ py_test(
     shard_count = 3,
     srcs_version = "PY2AND3",
     tags = [
+        "no_oss",
         "notsan",
     ],
     deps = [
