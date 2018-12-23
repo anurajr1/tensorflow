@@ -20,7 +20,6 @@ from __future__ import print_function
 
 import collections
 import contextlib
-import operator
 import weakref
 import six
 
@@ -331,7 +330,10 @@ class DistributedDelegate(DistributedValues):
   def __rmul__(self, o): return o * self.get()
   def __truediv__(self, o): return self.get() / o
   def __rtruediv__(self, o): return o / self.get()
-  def __floordiv__(self, o): return self.get() // o
+
+  def __floordiv__(self, o):
+    return self.get() // o
+
   def __rfloordiv__(self, o): return o // self.get()
   def __mod__(self, o): return self.get() % o
   def __rmod__(self, o): return o % self.get()
@@ -521,6 +523,11 @@ class DistributedVariable(DistributedDelegate):
     return self.primary._unique_id   # pylint: disable=protected-access
 
   @property
+  def _graph_key(self):
+    """Lets Optimizers know which graph this variable is from."""
+    return self.primary._graph_key  # pylint: disable=protected-access
+
+  @property
   def name(self):
     return self.primary.name
 
@@ -566,6 +573,38 @@ class DistributedVariable(DistributedDelegate):
 
 
 ops.register_dense_tensor_like_type(DistributedVariable)
+
+
+def _validate_colocate_extended(v, extended):
+  if v.distribute_strategy.extended is not extended:
+    raise ValueError(
+        "`colocate_vars_with` must only be passed a variable created in this "
+        "tf.distribute.Strategy.scope(), not %s created in scope: %s" %
+        (v, v.distribute_strategy,))
+
+
+def validate_colocate_distributed_variable(v, extended):
+  if not isinstance(v, DistributedVariable):
+    raise ValueError(
+        "`colocate_vars_with` must only be passed a variable created in this "
+        "tf.distribute.Strategy.scope(), not: %r" % (v,))
+  _validate_colocate_extended(v, extended)
+
+
+def validate_colocate_tpu_variable(v, extended):
+  if not isinstance(v, TPUMirroredVariable):
+    raise ValueError(
+        "`colocate_vars_with` must only be passed a variable created in this "
+        "tf.distribute.Strategy.scope(), not: %r" % (v,))
+  _validate_colocate_extended(v, extended)
+
+
+def validate_colocate(v, extended):
+  if not hasattr(v, "distribute_strategy"):
+    raise ValueError(
+        "`colocate_vars_with` must only be passed a variable created in this "
+        "tf.distribute.Strategy.scope(), not: %r" % (v,))
+  _validate_colocate_extended(v, extended)
 
 
 def _apply_aggregation(strategy, value, aggregation, destinations):
@@ -1492,21 +1531,22 @@ class PerReplicaDataset(object):
     self._input_workers = input_workers
     self._worker_index = worker_index
 
-    # Default to using prefetching in graph mode, unless specified.
-    # TODO(rohanj): Enable prefetching in eager mode.
+    # Default to using prefetching, unless specified.
     self._prefetch_on_device = prefetch_on_device
     if self._prefetch_on_device is None:
-      self._prefetch_on_device = not context.executing_eagerly()
-    assert not (self._prefetch_on_device and context.executing_eagerly()), (
-        "Prefetching is only supported in graph mode currently")
+      self._prefetch_on_device = True
 
     self._dataset = dataset
     if not self._prefetch_on_device:
       # TODO(priyag): If dropping remainder is not appropriate, find another
       # approach to distributing the dataset when not possible to divide evenly.
       # Possibly not an issue when we start using PartitionedDataset.
-      num_replicas = len(input_workers.compute_devices_for_worker(worker_index))
-      self._dataset = dataset.batch(num_replicas, drop_remainder=True)
+      num_replicas = len(
+          self._input_workers.compute_devices_for_worker(self._worker_index))
+      self._dataset = self._dataset.batch(num_replicas, drop_remainder=True)
+    else:
+      self._replica_devices = self._input_workers.compute_devices_for_worker(
+          self._worker_index)
 
   def make_one_shot_iterator(self):
     """Get a one time use iterator for the distributed PerReplicaDataset."""
@@ -1514,13 +1554,16 @@ class PerReplicaDataset(object):
     if not context.executing_eagerly():
       raise ValueError("Cannot create a one shot iterator. Please use "
                        "`make_initializable_iterator()` instead.")
-    # Eager mode prefetching would error out in constructor. Only remaining
-    # case is non-prefetching in eager mode. We delegate to
-    # PerReplicaDataIterator to handle that case.
-    dataset_iterator = dataset_ops.make_one_shot_iterator(self._dataset)
+    if self._prefetch_on_device:
+      dataset_iterator = multi_device_iterator_ops.MultiDeviceIterator(
+          self._dataset, self._replica_devices)
+    else:
+      dataset_iterator = dataset_ops.make_one_shot_iterator(self._dataset)
     return PerReplicaDataIterator(
-        dataset_iterator, self._input_workers, self._worker_index,
-        prefetch_on_device=False)
+        dataset_iterator,
+        self._input_workers,
+        self._worker_index,
+        prefetch_on_device=self._prefetch_on_device)
 
   def make_initializable_iterator(self):
     """Get an initializable iterator for the distributed PerReplicaDataset."""
@@ -1530,10 +1573,8 @@ class PerReplicaDataset(object):
       raise ValueError("Cannot create initializable iterator in Eager mode. "
                        "Please use `make_one_shot_iterator` instead.")
     if self._prefetch_on_device:
-      replica_devices = self._input_workers.compute_devices_for_worker(
-          self._worker_index)
       dataset_iterator = multi_device_iterator_ops.MultiDeviceIterator(
-          self._dataset, replica_devices)
+          self._dataset, self._replica_devices)
     else:
       dataset_iterator = dataset_ops.make_initializable_iterator(self._dataset)
     return PerReplicaDataIterator(
@@ -1690,13 +1731,9 @@ class InputIteratorImpl(InputIterator):
 
     self._iterators = iterators
     self._input_workers = input_workers
-    self._is_eager = context.executing_eagerly()
 
   def get_next(self, name=None):
     """Returns the next input from the iterator for all replicas."""
-    assert self._is_eager == context.executing_eagerly(), (
-        "Iterator should be created and used in same execution mode.")
-
     replicas = []
     for i, worker in enumerate(self._input_workers.worker_devices):
       if name is not None:
@@ -1716,9 +1753,6 @@ class InputIteratorImpl(InputIterator):
     Returns:
       A list of any initializer ops that should be run.
     """
-    assert self._is_eager == context.executing_eagerly(), (
-        "Iterator should be created and used in same execution mode.")
-
     init_ops = []
     for it in self._iterators:
       init_ops.extend(it.initialize())
@@ -1842,7 +1876,7 @@ class _SingleWorkerDatasetIterator(object):
     """Create iterator for the `dataset` to fetch data to worker's `devices` .
 
     `MultiDeviceIterator` is used to prefetch input to the devices on the
-    given worker. `MultiDeviceIterator` doesn't work in eager mode yet.
+    given worker.
 
     Args:
       dataset: A `tf.data.Dataset` instance.
@@ -1852,39 +1886,19 @@ class _SingleWorkerDatasetIterator(object):
     self._dataset = dataset
     self._worker = worker
     self._devices = devices
-    self._is_eager = context.executing_eagerly()
     self._make_iterator()
 
   def _make_iterator(self):
     """Make appropriate iterator on the dataset."""
     with ops.device(self._worker):
-      if self._is_eager:
-        # TODO(rohanj): Enable prefetching in eager mode.
-        # TODO(priyag): Measure the performance of this approach vs calling
-        # get_next on the original dataset N times.
-        dataset = self._dataset.batch(len(self._devices), drop_remainder=True)
-        iterator = dataset_ops.make_one_shot_iterator(dataset)
-      else:
-        iterator = multi_device_iterator_ops.MultiDeviceIterator(
-            self._dataset, self._devices)
-    self._iterator = iterator
+      self._iterator = multi_device_iterator_ops.MultiDeviceIterator(
+          self._dataset, self._devices)
 
   def get_next_as_list(self, name=None):
     """Get next element from the underlying iterator."""
+    del name
     with ops.device(self._worker):
-      if self._is_eager:
-        # Batched dataset case.
-        batch = self._iterator.get_next(name=name)
-        data_list = []
-        for i, d in enumerate(self._devices):
-          v = nest.map_structure(operator.itemgetter(i), batch)
-          with ops.device(d):
-            v = nest.map_structure(array_ops.identity, v)
-          data_list.append(v)
-      else:
-        # MultiDeviceIterator case.
-        data_list = self._iterator.get_next()
-
+      data_list = self._iterator.get_next()
       return data_list
 
   def initialize(self):
@@ -1897,7 +1911,7 @@ class _SingleWorkerDatasetIterator(object):
     Returns:
       A list of any initializer ops that should be run.
     """
-    if self._is_eager:
+    if context.executing_eagerly():
       self._make_iterator()
       return []
     else:
@@ -1941,6 +1955,13 @@ def _split_dataset_batch(dataset, split_batch_by):
   elif isinstance(batched_dataset, batching._MapAndBatchDataset):
     batch_size = batched_dataset._batch_size_t
     drop_remainder = batched_dataset._drop_remainder_t
+
+  prefetch_buffer = None
+  if isinstance(dataset, dataset_ops.PrefetchDataset):
+    prefetch_buffer = dataset._buffer_size
+  elif (isinstance(dataset, dataset_ops.DatasetV1Adapter)
+        and isinstance(dataset._dataset, dataset_ops.PrefetchDataset)):
+    prefetch_buffer = dataset._dataset._buffer_size
   # pylint: enable=protected-access
 
   if tensor_util.is_tensor(batch_size):
@@ -1956,7 +1977,10 @@ def _split_dataset_batch(dataset, split_batch_by):
   new_batch_size = batch_size // split_batch_by
 
   dataset = dataset.apply(batching.unbatch())
-  return dataset.batch(new_batch_size, drop_remainder=drop_remainder)
+  dataset = dataset.batch(new_batch_size, drop_remainder=drop_remainder)
+  if prefetch_buffer is not None:
+    dataset = dataset.prefetch(prefetch_buffer)
+  return dataset
 
 
 class MultiStepContext(object):

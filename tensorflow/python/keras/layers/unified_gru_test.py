@@ -176,8 +176,8 @@ class UnifiedGRUTest(keras_parameterized.TestCase):
       cudnn_model.fit(x_train, y_train)
       y_4 = cudnn_model.predict(x_train)
 
-      self.assertAllClose(y_1, y_3)
-      self.assertAllClose(y_2, y_4)
+      self.assertAllClose(y_1, y_3, rtol=1e-5, atol=1e-5)
+      self.assertAllClose(y_2, y_4, rtol=1e-5, atol=1e-5)
 
   @parameterized.named_parameters(
       # test_name, use_bias, bias_initializer, activation
@@ -380,6 +380,28 @@ class UnifiedGRUTest(keras_parameterized.TestCase):
                 'implementation': implementation_mode},
         input_shape=(num_samples, timesteps, embedding_dim))
 
+  def test_regularizers_GRU(self):
+    embedding_dim = 4
+    layer_class = keras.layers.UnifiedGRU
+    layer = layer_class(
+        5,
+        return_sequences=False,
+        weights=None,
+        input_shape=(None, embedding_dim),
+        kernel_regularizer=keras.regularizers.l1(0.01),
+        recurrent_regularizer=keras.regularizers.l1(0.01),
+        bias_regularizer='l2',
+        activity_regularizer='l1')
+    layer.build((None, None, 2))
+    self.assertEqual(len(layer.losses), 3)
+
+    x = keras.backend.variable(np.ones((2, 3, 2)))
+    layer(x)
+    if context.executing_eagerly():
+      self.assertEqual(len(layer.losses), 4)
+    else:
+      self.assertEqual(len(layer.get_losses_for(x)), 1)
+
 
 class GRULayerGradientTapeTest(test.TestCase):
 
@@ -414,8 +436,6 @@ class GRULayerV1OnlyTest(test.TestCase, parameterized.TestCase):
   @test_util.run_v1_only('b/120941292')
   @test_util.run_in_graph_and_eager_modes(config=_config)
   def test_statefulness_GRU(self):
-    self.skipTest('b/121275483')
-
     num_samples = 2
     timesteps = 3
     embedding_dim = 4
@@ -583,28 +603,6 @@ class GRULayerGraphOnlyTest(test.TestCase):
         # (layer weights properly updated).
         self.assertNotEqual(existing_loss, loss_value)
         existing_loss = loss_value
-
-  # b/120919032
-  @test_util.run_deprecated_v1
-  def test_regularizers_GRU(self):
-    embedding_dim = 4
-    layer_class = keras.layers.UnifiedGRU
-    with self.cached_session(config=_config):
-      layer = layer_class(
-          5,
-          return_sequences=False,
-          weights=None,
-          input_shape=(None, embedding_dim),
-          kernel_regularizer=keras.regularizers.l1(0.01),
-          recurrent_regularizer=keras.regularizers.l1(0.01),
-          bias_regularizer='l2',
-          activity_regularizer='l1')
-      layer.build((None, None, 2))
-      self.assertEqual(len(layer.losses), 3)
-
-      x = keras.backend.variable(np.ones((2, 3, 2)))
-      layer(x)
-      self.assertEqual(len(layer.get_losses_for(x)), 1)
 
 
 if __name__ == '__main__':

@@ -126,8 +126,7 @@ class TPUStrategy(distribute_lib.DistributionStrategy):
 
   def __init__(self,
                tpu_cluster_resolver=None,
-               steps_per_run=None,
-               num_cores=None):
+               steps_per_run=None):
     """Initializes the TPUStrategy object.
 
     Args:
@@ -138,11 +137,9 @@ class TPUStrategy(distribute_lib.DistributionStrategy):
           metrics, summaries etc.
           This parameter is only used when Distribution Strategy is used with
           estimator or keras.
-      num_cores: Number of cores to use on the TPU. If None specified, then
-          auto-detect the cores and topology of the TPU system.
     """
     super(TPUStrategy, self).__init__(TPUExtended(
-        self, tpu_cluster_resolver, steps_per_run, num_cores))
+        self, tpu_cluster_resolver, steps_per_run))
 
   @property
   def steps_per_run(self):
@@ -161,8 +158,7 @@ class TPUExtended(distribute_lib.DistributionStrategyExtended):
   def __init__(self,
                container_strategy,
                tpu_cluster_resolver=None,
-               steps_per_run=None,
-               num_cores=None):
+               steps_per_run=None):
     super(TPUExtended, self).__init__(container_strategy)
 
     if tpu_cluster_resolver is None:
@@ -175,8 +171,6 @@ class TPUExtended(distribute_lib.DistributionStrategyExtended):
 
     self._tpu_cluster_resolver = tpu_cluster_resolver
     self._tpu_metadata = get_tpu_system_metadata(self._tpu_cluster_resolver)
-    # TODO(sourabhbajaj): Change this from num_cores to metadata_override
-    self._num_cores_override = num_cores
 
     # TODO(jhseu): Switch to DeviceAssignment to support pods and model
     # parallelism.
@@ -229,6 +223,9 @@ class TPUExtended(distribute_lib.DistributionStrategyExtended):
 
     # Update Strategy state to make sure we can track device initialization.
     TPUExtended._initialized_devices.append(master)
+
+  def _validate_colocate_with_variable(self, colocate_with_variable):
+    values.validate_colocate_tpu_variable(colocate_with_variable, self)
 
   def _get_enqueue_op_per_host(self, host_id, multi_worker_iterator,
                                input_shapes, iterations):
@@ -570,7 +567,7 @@ class TPUExtended(distribute_lib.DistributionStrategyExtended):
 
   @property
   def _num_replicas_in_sync(self):
-    return self._num_cores_override or self._tpu_metadata.num_cores
+    return self._tpu_metadata.num_cores
 
   @property
   def experimental_between_graph(self):

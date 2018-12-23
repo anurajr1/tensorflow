@@ -27,7 +27,7 @@ namespace {
 
 Status PopulateInfeedLayoutVector(const xla::Shape& shape,
                                   std::vector<int>* layouts) {
-  if (xla::ShapeUtil::IsTuple(shape)) {
+  if (shape.IsTuple()) {
     int64 tuple_elements = xla::ShapeUtil::TupleElementCount(shape);
     for (int64 i = 0; i < tuple_elements; ++i) {
       const xla::Shape& subshape =
@@ -39,7 +39,7 @@ Status PopulateInfeedLayoutVector(const xla::Shape& shape,
       layouts->push_back(dim);
     }
   } else {
-    layouts->insert(layouts->end(), xla::ShapeUtil::Rank(shape), -1);
+    layouts->insert(layouts->end(), shape.rank(), -1);
   }
   return Status::OK();
 }
@@ -49,13 +49,13 @@ Status PopulateInfeedLayoutVector(const xla::Shape& shape,
 // Convert an XLA Shape into the equivalent TensorFlow shape.
 Status XLAShapeToTensorShape(const xla::Shape& shape,
                              TensorShape* tensor_shape) {
-  if (xla::ShapeUtil::IsTuple(shape)) {
+  if (shape.IsTuple()) {
     return errors::InvalidArgument("XLA shape ",
                                    xla::ShapeUtil::HumanString(shape),
                                    " cannot be converted to a TensorShape");
   }
   *tensor_shape = TensorShape();
-  for (int i = 0; i < xla::ShapeUtil::Rank(shape); ++i) {
+  for (int i = 0; i < shape.rank(); ++i) {
     tensor_shape->AddDim(shape.dimensions(i));
   }
   return Status::OK();

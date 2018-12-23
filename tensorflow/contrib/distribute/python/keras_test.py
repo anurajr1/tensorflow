@@ -1045,14 +1045,12 @@ class TestDistributionStrategyErrorCases(test.TestCase, parameterized.TestCase):
 
       # Test with not specifying the `steps` argument.
       with self.assertRaisesRegexp(
-          ValueError, 'you should specify the `steps_per_epoch` argument'):
+          ValueError, 'the `steps_per_epoch` argument'):
         model.fit(dataset, epochs=1, verbose=0)
-      with self.assertRaisesRegexp(ValueError,
-                                   'you should specify the `steps` argument'):
+      with self.assertRaisesRegexp(ValueError, 'the `steps` argument'):
         model.evaluate(dataset, verbose=0)
 
-      with self.assertRaisesRegexp(ValueError,
-                                   'you should specify the `steps` argument'):
+      with self.assertRaisesRegexp(ValueError, 'the `steps` argument'):
         model.predict(dataset, verbose=0)
 
   @combinations.generate(combinations.combine(
@@ -1119,12 +1117,15 @@ class TestDistributionStrategyWithLossMasking(test.TestCase,
 class TestDistributionStrategyWithNormalizationLayer(
     test.TestCase, parameterized.TestCase):
 
-  @combinations.generate(all_strategy_combinations())
-  def test_batchnorm_correctness(self, distribution):
+  @combinations.generate(combinations.times(
+      all_strategy_combinations(),
+      combinations.combine(fused=[True, False])))
+  def test_batchnorm_correctness(self, distribution, fused):
     with self.cached_session():
       with distribution.scope():
         model = keras.models.Sequential()
-        norm = keras.layers.BatchNormalization(input_shape=(10,), momentum=0.8)
+        norm = keras.layers.BatchNormalization(
+            input_shape=(10,), momentum=0.8, fused=fused)
         model.add(norm)
         model.compile(loss='mse',
                       optimizer=gradient_descent.GradientDescentOptimizer(0.01))
