@@ -503,7 +503,7 @@ class CategoricalHinge(Loss):
 class LogLoss(Loss):
   """Computes the log loss between `y_true` and `y_pred`.
 
-  logloss = -y log(p) - (1-y) log(1-p)
+  logloss = - y_true * log(y_pred) - (1 - y_true) * log(1 - y_pred)
 
   Usage:
 
@@ -519,25 +519,93 @@ class LogLoss(Loss):
   model = keras.models.Model(inputs, outputs)
   model.compile('sgd', loss=tf.losses.LogLoss())
   ```
-
-  Args:
-    epsilon: A small increment to add to avoid taking a log of zero.
-    reduction: Type of `tf.losses.Reduction` to apply to loss. Default value is
-      `SUM_OVER_BATCH_SIZE`.
-    name: Optional name for the op.
   """
-
-  def __init__(self,
-               epsilon=1e-7,
-               reduction=losses_impl.ReductionV2.SUM_OVER_BATCH_SIZE,
-               name=None):
-    super(LogLoss, self).__init__(reduction=reduction, name=name)
-    self.epsilon = epsilon
 
   def call(self, y_true, y_pred):
     y_pred = ops.convert_to_tensor(y_pred)
     y_true = math_ops.cast(y_true, y_pred.dtype)
-    return logloss(y_true, y_pred, epsilon=self.epsilon)
+    return logloss(y_true, y_pred)
+
+
+class Poisson(Loss):
+  """Computes the poisson loss between `y_true` and `y_pred`.
+
+  loss = y_pred - y_true * log(y_pred)
+
+  Usage:
+
+  ```python
+  p = tf.losses.Poisson()
+  loss = p([1, 9, 2], [4, 8, 12])
+  print('Loss: ', loss.numpy())  # Loss: -4.63
+  ```
+
+  Usage with tf.keras API:
+
+  ```python
+  model = keras.models.Model(inputs, outputs)
+  model.compile('sgd', loss=tf.losses.Poisson())
+  ```
+  """
+
+  def call(self, y_true, y_pred):
+    y_pred = ops.convert_to_tensor(y_pred)
+    y_true = math_ops.cast(y_true, y_pred.dtype)
+    return poisson(y_true, y_pred)
+
+
+class Logcosh(Loss):
+  """Computes the logarithm of the hyperbolic cosine of the prediction error.
+
+  logcosh = log((exp(x) + exp(-x))/2) where x is the error `y_pred` - `y_true`.
+
+  Usage:
+
+  ```python
+  l = tf.losses.Logcosh()
+  loss = l([0., 1., 1.], [1., 0., 1.])
+  print('Loss: ', loss.numpy())  # Loss: 0.289
+  ```
+
+  Usage with tf.keras API:
+
+  ```python
+  model = keras.models.Model(inputs, outputs)
+  model.compile('sgd', loss=tf.losses.Logcosh())
+  ```
+  """
+
+  def call(self, y_true, y_pred):
+    y_pred = ops.convert_to_tensor(y_pred)
+    y_true = math_ops.cast(y_true, y_pred.dtype)
+    return logcosh(y_true, y_pred)
+
+
+class KullbackLeiblerDivergence(Loss):
+  """Computes kullback leibler divergence loss between `y_true` and `y_pred`.
+
+  loss = y_true * log(y_true / y_pred)
+
+  Usage:
+
+  ```python
+  k = tf.losses.KullbackLeiblerDivergence()
+  loss = k([.4, .9, .2], [.5, .8, .12])
+  print('Loss: ', loss.numpy())  # Loss: -0.043
+  ```
+
+  Usage with tf.keras API:
+
+  ```python
+  model = keras.models.Model(inputs, outputs)
+  model.compile('sgd', loss=tf.losses.KullbackLeiblerDivergence())
+  ```
+  """
+
+  def call(self, y_true, y_pred):
+    y_pred = ops.convert_to_tensor(y_pred)
+    y_true = math_ops.cast(y_true, y_pred.dtype)
+    return kullback_leibler_divergence(y_true, y_pred)
 
 
 @keras_export('keras.metrics.mean_squared_error',
@@ -602,9 +670,10 @@ def categorical_hinge(y_true, y_pred):
   return math_ops.maximum(0., neg - pos + 1.)
 
 
-def logloss(y_true, y_pred, epsilon=1e-7):
-  losses = math_ops.multiply(y_true, math_ops.log(y_pred + epsilon))
-  losses += math_ops.multiply((1 - y_true), math_ops.log(1 - y_pred + epsilon))
+def logloss(y_true, y_pred):
+  losses = math_ops.multiply(y_true, math_ops.log(y_pred + K.epsilon()))
+  losses += math_ops.multiply((1 - y_true),
+                              math_ops.log(1 - y_pred + K.epsilon()))
   return K.mean(-losses, axis=-1)
 
 

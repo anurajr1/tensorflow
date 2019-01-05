@@ -147,12 +147,9 @@ bool LayoutConstraints::OperandBufferForwarded(
   PointsToSet::BufferSet* output_buffers = GetBufferSet(instruction);
   PointsToSet::BufferSet* operand_buffers =
       GetBufferSet(instruction->operand(operand_no));
-  for (const LogicalBuffer* output_buffer : *output_buffers) {
-    if (operand_buffers->count(output_buffer) > 0) {
-      return true;
-    }
-  }
-  return false;
+  return absl::c_any_of(*output_buffers, [&](const LogicalBuffer* b) {
+    return operand_buffers->count(b) > 0;
+  });
 }
 
 Status LayoutConstraints::SetBufferLayout(const Layout& layout,
@@ -2135,7 +2132,7 @@ Status LayoutAssignment::ClearPreviousPassSideEffects(HloModule* module) {
     for (HloInstruction* instruction :
          computation->MakeInstructionPostOrder()) {
       if (instruction->opcode() == HloOpcode::kCopy &&
-          added_copies_.count(instruction) > 0) {
+          added_copies_.contains(instruction)) {
         VLOG(5) << "Removing added copy: " << instruction->ToString();
         TF_RETURN_IF_ERROR(
             instruction->ReplaceAllUsesWith(instruction->mutable_operand(0)));
