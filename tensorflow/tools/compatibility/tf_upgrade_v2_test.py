@@ -684,26 +684,32 @@ bazel-bin/tensorflow/tools/compatibility/update/generate_v2_reorders_map
     self.assertEqual(new_text, expected_text)
 
   def testSoftMaxCrossEntropyWithLogitsV2(self):
-    text = "tf.nn.softmax_cross_entropy_with_logits_v2(labels, logits, dim=2)"
+    text = (
+        "tf.nn.softmax_cross_entropy_with_logits_v2("
+        "labels=labels, logits=logits, dim=2)")
     expected_text = (
-        "tf.nn.softmax_cross_entropy_with_logits(labels, logits, axis=2)")
+        "tf.nn.softmax_cross_entropy_with_logits("
+        "labels=labels, logits=logits, axis=2)")
     _, unused_report, errors, new_text = self._upgrade(text)
     self.assertEqual(new_text, expected_text)
 
     self.assertFalse(errors)
 
   def testSoftMaxCrossEntropyWithLogits(self):
-    text = "tf.nn.softmax_cross_entropy_with_logits(labels, logits, dim=2)"
+    text = ("tf.nn.softmax_cross_entropy_with_logits("
+            "labels=labels, logits=logits, dim=2)")
     expected_text = (
-        "tf.nn.softmax_cross_entropy_with_logits(labels, logits, dim=2)")
-    _, report, errors, new_text = self._upgrade(text)
+        "tf.nn.softmax_cross_entropy_with_logits("
+        "labels=tf.stop_gradient(labels), logits=logits, axis=2)")
+    _, unused_report, unused_errors, new_text = self._upgrade(text)
     self.assertEqual(new_text, expected_text)
-    self.assertIn(
-        "tf.nn.softmax_cross_entropy_with_logits requires manual check",
-        errors[0])
-    self.assertIn(
-        "tf.nn.softmax_cross_entropy_with_logits behavior has changed. ",
-        report)
+
+    text = ("tf.nn.softmax_cross_entropy_with_logits("
+            "labels=foo(bar))")
+    expected_text = ("tf.nn.softmax_cross_entropy_with_logits("
+                     "labels=tf.stop_gradient(foo(bar)))")
+    _, unused_report, unused_errors, new_text = self._upgrade(text)
+    self.assertEqual(expected_text, new_text)
 
   def testSparseMatmul(self):
     text = ("tf.sparse_matmul(a, b, c, d, e, f, g)\n")
@@ -855,12 +861,56 @@ tf.print('abc')
     self.assertIn(new_text, [expected_text1, expected_text2])
 
   def testCast(self):
-    for dtype in ["int32", "int64", "float", "double",
-                  "complex64", "complex128", "bfloat16"]:
-      text = "tf.to_%s(x, name='test')" % dtype
+    for (name, dtype) in [("int32", "int32"),
+                          ("int64", "int64"),
+                          ("float", "float32"),
+                          ("double", "float64"),
+                          ("complex64", "complex64"),
+                          ("complex128", "complex128"),
+                          ("bfloat16", "bfloat16")]:
+      text = "tf.to_%s(x, name='test')" % name
       expected_text = "tf.cast(x, name='test', dtype=tf.%s)" % dtype
       _, unused_report, unused_errors, new_text = self._upgrade(text)
       self.assertEqual(expected_text, new_text)
+
+  def testCastPositionalSecondArgument(self):
+    for (name, dtype) in [("int32", "int32"),
+                          ("int64", "int64"),
+                          ("float", "float32"),
+                          ("double", "float64"),
+                          ("complex64", "complex64"),
+                          ("complex128", "complex128"),
+                          ("bfloat16", "bfloat16")]:
+      text = "tf.to_%s(x, 'test')" % name
+      expected_text = "tf.cast(x, name='test', dtype=tf.%s)" % dtype
+      _, unused_report, unused_errors, new_text = self._upgrade(text)
+      self.assertEqual(expected_text, new_text)
+
+  def testImageResize(self):
+    for method in ["bilinear", "area", "bicubic", "nearest_neighbor"]:
+      text = "tf.image.resize_%s(i, s)" % method
+      expected_text = ("tf.image.resize(i, s, "
+                       "method=tf.image.ResizeMethod.%s)" % method.upper())
+      _, unused_report, unused_errors, new_text = self._upgrade(text)
+      self.assertEqual(expected_text, new_text)
+
+  def testImageResizeExtraPositionalArgs(self):
+    for method in ["bilinear", "area", "bicubic", "nearest_neighbor"]:
+      text = "tf.image.resize_%s(i, s, a, p)" % method
+      expected_text = ["tf.image.resize(i, s, ", "align_corners=a, ",
+                       "preserve_aspect_ratio=p, ",
+                       "method=tf.image.ResizeMethod.%s)" % method.upper()]
+      _, unused_report, unused_errors, new_text = self._upgrade(text)
+      for s in expected_text:
+        self.assertIn(s, new_text)
+
+  def testCond(self):
+    text = "tf.cond(a, b, c, True)"
+    expected_text = "tf.cond(pred=a, true_fn=b, false_fn=c)"
+    _, unused_report, errors, new_text = self._upgrade(text)
+    self.assertEqual(expected_text, new_text)
+    self.assertIn("tf.cond", errors[0])
+    self.assertIn("requires manual check", errors[0])
 
 
 class TestUpgradeFiles(test_util.TensorFlowTestCase):

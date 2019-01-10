@@ -53,8 +53,6 @@ def fit_distributed(model,
                     steps_per_epoch=None,
                     validation_steps=None):
   """Fit loop for Distribution Strategies."""
-  # TODO(b/122314600): Remove the scope validate.
-  distributed_training_utils.validate_not_in_strategy_scope()
   distributed_training_utils.validate_callbacks(callbacks, model.optimizer)
   distributed_training_utils.validate_inputs(
       x, y, model._distribution_strategy)
@@ -138,8 +136,6 @@ def evaluate_distributed(model,
                          steps=None,
                          callbacks=None):
   """Evaluate loop for Distribution Strategies."""
-  # TODO(b/122314600): Remove the scope validate.
-  distributed_training_utils.validate_not_in_strategy_scope()
   distributed_training_utils.validate_inputs(x, y, model._distribution_strategy)
   first_x_value = nest.flatten(x)[0]
   if isinstance(first_x_value, np.ndarray):
@@ -175,8 +171,6 @@ def predict_distributed(model,
                         steps=None,
                         callbacks=None):
   """Predict loop for Distribution Strategies."""
-  # TODO(b/122314600): Remove the scope validate.
-  distributed_training_utils.validate_not_in_strategy_scope()
   distributed_training_utils.validate_inputs(
       x, None, model._distribution_strategy)
   first_x_value = nest.flatten(x)[0]

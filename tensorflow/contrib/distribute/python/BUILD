@@ -131,6 +131,7 @@ py_library(
         "//tensorflow/python:math_ops",
         "//tensorflow/python/distribute:distribute_lib",
         "//tensorflow/python/distribute:input_lib",
+        "//tensorflow/python/distribute:numpy_dataset",
         "//tensorflow/python/distribute:reduce_util",
         "//tensorflow/python/distribute:values",
         "//tensorflow/python/eager:context",
@@ -153,6 +154,7 @@ py_library(
         "//tensorflow/python/distribute:cross_device_utils",
         "//tensorflow/python/distribute:input_lib",
         "//tensorflow/python/distribute:multi_worker_util",
+        "//tensorflow/python/distribute:numpy_dataset",
         "//tensorflow/python/distribute:values",
         "//tensorflow/python/eager:context",
     ],
@@ -178,6 +180,7 @@ py_library(
         "//tensorflow/python/eager:backprop",
         "//tensorflow/python/eager:context",
         "//tensorflow/python/eager:test",
+        "//third_party/py/numpy",
     ],
 )
 
@@ -303,6 +306,7 @@ py_library(
         "//tensorflow/python:tensor_util",
         "//tensorflow/python:util",
         "//tensorflow/python/distribute:input_lib",
+        "//tensorflow/python/distribute:numpy_dataset",
         "//tensorflow/python/distribute:reduce_util",
         "//tensorflow/python/distribute:values",
     ],
@@ -674,7 +678,9 @@ cuda_py_test(
     additional_deps = [
         ":keras_correctness_test_lib",
     ],
-    shard_count = 16,
+    # Shard count is set to an odd number to distribute tasks across
+    # shards more evenly.
+    shard_count = 19,
     tags = [
         "multi_and_single_gpu",
         "no_oss",  # TODO(b/117919883): Fix python error.
