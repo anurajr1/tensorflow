@@ -1,4 +1,4 @@
-/* Copyright 2015 The TensorFlow Authors. All Rights Reserved.
+/* Copyright 2018 The TensorFlow Authors. All Rights Reserved.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -13,17 +13,22 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#if GOOGLE_CUDA
+#include "tensorflow/core/grappler/optimizers/data/optimizer_base.h"
 
-#include "tensorflow/core/kernels/cwise_ops_gpu_common.cu.h"
-#include "tensorflow/core/kernels/cwise_ops_gpu_gradients.cu.h"
+#include "tensorflow/core/common_runtime/metrics.h"
 
 namespace tensorflow {
-namespace functor {
-DEFINE_BINARY2(igamma, float, double);
-DEFINE_BINARY2(igamma_grad_a, float, double);
-DEFINE_BINARY2(igammac, float, double);
-}  // namespace functor
-}  // namespace tensorflow
+namespace grappler {
 
-#endif  // GOOGLE_CUDA
+Status TFDataOptimizerBase::Optimize(Cluster* cluster, const GrapplerItem& item,
+                                     GraphDef* output) {
+  OptimizationStats stats;
+  Status s = OptimizeAndCollectStats(cluster, item, output, &stats);
+  if (s.ok() && stats.num_changes > 0) {
+    metrics::RecordTFDataOptimization(name(), stats.num_changes);
+  }
+  return s;
+}
+
+}  // namespace grappler
+}  // namespace tensorflow

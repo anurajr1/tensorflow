@@ -11,6 +11,7 @@ visibility = [
     "//tensorflow/lite/toco/python:__pkg__",
     "//tensorflow_models:__subpackages__",
     "//tensorflow_model_optimization:__subpackages__",
+    "//third_party/py/cleverhans:__subpackages__",
     # TODO(aselle): to pass open source test.
     "//bazel_pip/tensorflow/lite/toco/python:__pkg__",
 ]
@@ -111,6 +112,7 @@ py_library(
     ],
     deps = [
         ":array_ops",
+        ":audio_ops_gen",
         ":bitwise_ops",
         ":boosted_trees_ops",
         ":check_ops",
@@ -1101,6 +1103,14 @@ py_library(
         "//third_party/py/numpy",
         "@six_archive//:six",
     ],
+)
+
+# Including this as a dependency will result in tests using
+# :framework_test_lib to use XLA.
+py_library(
+    name = "is_xla_test_true",
+    srcs = ["framework/is_xla_test_true.py"],
+    srcs_version = "PY2AND3",
 )
 
 py_library(
