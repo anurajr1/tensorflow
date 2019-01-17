@@ -562,6 +562,9 @@ class DistributedVariable(DistributedDelegate):
   def read_value(self):
     return self._distribute_strategy.extended.read_var(self)
 
+  def value(self):
+    return self._get_closest().value()
+
   def _should_act_as_resource_variable(self):
     """Pass resource_variable_ops.is_resource_variable check."""
     pass
@@ -605,8 +608,8 @@ def validate_colocate(v, extended):
 
 def _apply_aggregation(strategy, value, aggregation, destinations):
   if aggregation == vs.VariableAggregation.ONLY_FIRST_REPLICA:
-    return strategy.broadcast(strategy.unwrap(value)[0],
-                              destinations=destinations)
+    return strategy.extended.broadcast_to(strategy.unwrap(value)[0],
+                                          destinations=destinations)
   reduce_op = reduce_util.ReduceOp.from_variable_aggregation(aggregation)
   return strategy.extended.reduce_to(reduce_op, value, destinations)
 
