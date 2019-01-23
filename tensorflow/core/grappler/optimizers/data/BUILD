@@ -125,7 +125,9 @@ tf_cc_test(
     srcs = ["function_utils_test.cc"],
     deps = [
         ":function_utils",
+        ":graph_utils",
         "//tensorflow/core:framework",
+        "//tensorflow/core:ops",
         "//tensorflow/core:test",
         "//tensorflow/core:test_main",
         "//tensorflow/core:testlib",
@@ -133,7 +135,7 @@ tf_cc_test(
         "//tensorflow/core/grappler/optimizers:custom_graph_optimizer_registry",
         "//tensorflow/core/kernels:cast_op",
         "//tensorflow/tools/graph_transforms:transform_utils",
-    ],
+    ] + tf_protos_all(),
 )
 
 cc_library(
@@ -438,6 +440,7 @@ cc_library(
         "map_parallelization.h",
     ],
     deps = [
+        ":function_utils",
         ":graph_utils",
         ":optimizer_base",
         "@com_google_absl//absl/container:flat_hash_set",
@@ -478,6 +481,7 @@ cc_library(
         ":optimizer_base",
         ":vectorization_utils",
         "@com_google_absl//absl/container:flat_hash_set",
+        "//tensorflow/core:framework",
         "//tensorflow/core:lib",
         "//tensorflow/core/grappler:mutable_graph_view",
         "//tensorflow/core/grappler:grappler_item",
@@ -502,6 +506,7 @@ tf_cc_test(
         "//tensorflow/core:test_main",
         "//tensorflow/core:testlib",
         "//tensorflow/core/grappler:grappler_item",
+        "//tensorflow/core/grappler/utils:topological_sort",
         "//tensorflow/core/kernels/data",
     ],
 )

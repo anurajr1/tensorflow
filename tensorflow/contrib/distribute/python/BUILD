@@ -51,9 +51,7 @@ cuda_py_test(
         ":mirrored_strategy",
         ":multi_worker_test_base",
         "@absl_py//absl/testing:parameterized",
-        "//tensorflow/core:protos_all_py",
         "//tensorflow/python:errors",
-        "//tensorflow/python:framework_test_lib",
         "//tensorflow/python/data/ops:dataset_ops",
         "//tensorflow/python/distribute:input_lib",
         "//tensorflow/python/distribute:values",
@@ -681,6 +679,7 @@ distribute_py_test(
         "no_oss",  # TODO(b/117919883): Fix python error.
         "no_pip",
         "no_windows_gpu",
+        "notap",  # TODO(b/123097760): Fix and re-enable the test.
         "notsan",
     ],
     deps = [
@@ -765,6 +764,7 @@ distribute_py_test(
         "no_oss",  # TODO(b/117919883): Fix python error.
         "no_pip",
         "no_windows_gpu",
+        "notap",  # TODO(b/123097760): Fix and re-enable the test.
         "notsan",
     ],
     deps = [
