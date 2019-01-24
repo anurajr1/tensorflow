@@ -223,6 +223,38 @@ class BaseLayerTest(keras_parameterized.TestCase):
     model(np.zeros((2, 4), dtype='float32'))
     self.assertTrue(model.built)
 
+  def test_learning_phase_freezing_for_layers(self):
+    # This test is only meant to run in graph functions mode (ambient eager).
+    # In forced eager, `model.predict` ignores the global learning phase
+    # and just uses training=False. TODO(fchollet): consider unifying the
+    # behaviors.
+
+    class LearningPhaseLayer(keras.layers.Layer):
+
+      def call(self, inputs):
+        return keras.backend.in_train_phase(
+            lambda: array_ops.ones_like(inputs),
+            lambda: array_ops.zeros_like(inputs))
+
+    def get_learning_phase_value():
+      model = keras.models.Sequential([LearningPhaseLayer(input_shape=(1,))])
+      return np.sum(model.predict(np.ones((1, 1))))
+
+    self.assertEqual(get_learning_phase_value(), 0)
+
+    # Test scope.
+    with keras.backend.learning_phase_scope(1):
+      self.assertEqual(get_learning_phase_value(), 1)
+
+    # The effects of the scope end after exiting it.
+    self.assertEqual(get_learning_phase_value(), 0)
+
+    # Test setting.
+    keras.backend.set_learning_phase(1)
+    self.assertEqual(get_learning_phase_value(), 1)
+    keras.backend.set_learning_phase(0)
+    self.assertEqual(get_learning_phase_value(), 0)
+
   def test_using_symbolic_tensors_with_tf_ops(self):
     # Single-input.
     x = keras.Input((3,))
@@ -252,18 +284,14 @@ class BaseLayerTest(keras_parameterized.TestCase):
       x1 = array_ops.ones((3, 3))
     x2 = array_ops.ones((3, 3))
     self.assertIsInstance(x2, ops.EagerTensor)
-    with self.assertRaisesRegexp(TypeError,
-                                 'provided list of inputs contains '
-                                 'objects other than \'EagerTensor\''):
+    with self.assertRaisesRegexp(TypeError, 'Graph tensors'):
       math_ops.matmul(x1, x2)
 
   def test_mixing_numpy_arrays_and_graph_tensors(self):
     with ops.Graph().as_default():
       x1 = array_ops.ones((3, 3))
     x2 = np.ones((3, 3), dtype='float32')
-    with self.assertRaisesRegexp(TypeError,
-                                 'provided list of inputs contains '
-                                 'objects other than \'EagerTensor\''):
+    with self.assertRaisesRegexp(TypeError, 'Graph tensors'):
       math_ops.matmul(x1, x2)
 
   @test_util.run_in_graph_and_eager_modes

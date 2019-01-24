@@ -161,7 +161,8 @@ enum class OperatorType : uint8 {
   kMirrorPad,
   kUnique,
   kUnidirectionalSequenceRnn,
-  kBidirectionalSequenceLstm
+  kBidirectionalSequenceLstm,
+  kReverseV2
 };
 
 // Helper to deal with TensorFlow arrays using a different ordering of
@@ -1703,6 +1704,7 @@ struct GatherOperator : Operator {
 //
 // Inputs:
 //   inputs[0]: required: the input tensor
+//   inputs[1]: optional: 0-D (scalar) axis
 //
 // TensorFlow equivalent: ArgMax
 struct ArgMaxOperator : Operator {
@@ -1714,6 +1716,7 @@ struct ArgMaxOperator : Operator {
 //
 // Inputs:
 //   inputs[0]: required: the input tensor
+//   inputs[1]: optional: 0-D (scalar) axis
 //
 // TensorFlow equivalent: ArgMin
 struct ArgMinOperator : Operator {
@@ -1954,6 +1957,16 @@ struct UnpackOperator : Operator {
 // TensorFlow equivalent: tf.zeros_like
 struct TensorFlowZerosLikeOperator : Operator {
   TensorFlowZerosLikeOperator() : Operator(OperatorType::kZerosLike) {}
+};
+
+// ReverseV2 operator:
+//
+// Inputs:
+// Inputs[0]: required: the input array.
+//
+// TensorFlow equivalent: ReverseV2.
+struct ReverseV2Operator : Operator {
+  ReverseV2Operator() : Operator(OperatorType::kReverseV2) {}
 };
 
 enum class MirrorPadMode { kNone, kSymmetric, kReflect };
