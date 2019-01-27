@@ -32,6 +32,7 @@ from tensorflow.python.framework import dtypes
 from tensorflow.python.framework import tensor_spec
 from tensorflow.python.lib.io import file_io
 from tensorflow.python.ops import array_ops
+from tensorflow.python.ops import math_ops
 from tensorflow.python.ops import variables
 from tensorflow.python.saved_model import load
 from tensorflow.python.saved_model import save
@@ -625,15 +626,81 @@ class LoadTest(test.TestCase, parameterized.TestCase):
     self.assertEqual(8., imported.f(y=constant_op.constant(3.),
                                     x=constant_op.constant(2.)).numpy())
 
+  def test_revived_concrete_function_tensorspec_kwargs(self, cycles):
+
+    @def_function.function
+    def func(*args):
+      x, y = args
+      return x * (y + 1.)
+    root = tracking.AutoCheckpointable()
+    root.f = func.get_concrete_function(
+        tensor_spec.TensorSpec([], dtypes.float32, name="x"),
+        tensor_spec.TensorSpec([], dtypes.float32, name="y"))
+    self.assertEqual(8., root.f(y=constant_op.constant(3.),
+                                x=constant_op.constant(2.)).numpy())
+    imported = self.cycle(root, cycles, signatures={})
+    self.assertEqual(8., imported.f(y=constant_op.constant(3.),
+                                    x=constant_op.constant(2.)).numpy())
+
+  def test_concrete_function_variable_argument(self, cycles):
+    # TODO(allenl): Fix variables in input signatures.
+    self.skipTest("Need to fix encoding of variables in inputs signatures")
+    capture = variables.Variable(0)
+
+    @def_function.function
+    def func(v):
+      v.assign_add(1)
+      capture.assign_sub(1)
+
+    vsave = variables.Variable(1)
+    root = tracking.AutoCheckpointable()
+    root.f = func.get_concrete_function(vsave)
+    root.capture = capture
+    self.assertEqual(1, vsave.numpy())
+    root.f(vsave)
+    self.assertEqual(2, vsave.numpy())
+    self.assertEqual(-1, capture.numpy())
+    imported = self.cycle(root, cycles)
+
+    vload = variables.Variable(1)
+    imported.f(vload)
+    self.assertEqual(2, vload.numpy())
+    imported.f(v=vload)
+    self.assertEqual(3, vload.numpy())
+    self.assertEqual(-3, imported.capture.numpy())
+    self.assertEqual(-1, capture.numpy())
+
+  def test_function_and_component(self, cycles):
+
+    @def_function.function
+    def func(v):
+      return v + 1
+
+    root = tracking.AutoCheckpointable()
+    root.func = func
+    root.concrete_func = func.get_concrete_function(
+        tensor_spec.TensorSpec(None, dtypes.int32))
+    one = constant_op.constant(1)
+    self.assertEqual(2, root.func(one).numpy())
+    self.assertEqual(2, root.concrete_func(one).numpy())
+    imported = self.cycle(root, cycles)
+    self.assertEqual(2, imported.func(one).numpy())
+    self.assertEqual(2, imported.concrete_func(one).numpy())
+
   def test_dict(self, cycles):
     root = tracking.AutoCheckpointable()
     root.variables = dict(a=variables.Variable(1.))
     root.variables["b"] = variables.Variable(2.)
     root.variables["c"] = 1
+    root.funcs = dict(
+        a=def_function.function(lambda: constant_op.constant(100.)))
+    root.funcs["conc"] = root.funcs["a"].get_concrete_function()
     imported = self.cycle(root, cycles)
     self.assertEqual(1., imported.variables["a"].numpy())
     self.assertEqual(2., imported.variables["b"].numpy())
     self.assertEqual(set(["a", "b"]), set(imported.variables.keys()))
+    self.assertEqual(100., imported.funcs["a"]().numpy())
+    self.assertEqual(100., imported.funcs["conc"]().numpy())
 
   def test_list(self, cycles):
     root = tracking.AutoCheckpointable()
@@ -646,6 +713,26 @@ class LoadTest(test.TestCase, parameterized.TestCase):
     self.assertIs(None, imported.variables[1])
     self.assertEqual(3, len(imported.variables))
 
+  def test_functions_list(self, cycles):
+    root = tracking.AutoCheckpointable()
+    v1 = variables.Variable(1.)
+    root.losses = [def_function.function(lambda: math_ops.reduce_sum(v1 ** 2))]
+    root.variables = [v1]
+
+    @def_function.function
+    def _v2_loss():
+      if len(root.variables) == 1:
+        v2 = variables.Variable(2.)
+        root.variables.append(v2)
+      return math_ops.reduce_sum(root.variables[1] ** 2)
+
+    root.losses.append(_v2_loss)
+    self.assertAllClose([1., 4.], [loss() for loss in root.losses])
+    imported = self.cycle(root, cycles)
+    self.assertAllClose([1., 4.], [loss() for loss in imported.losses])
+    imported.variables[0].assign(3.)
+    imported.variables[1].assign(4.)
+    self.assertAllClose([9., 16.], [loss() for loss in imported.losses])
 
 if __name__ == "__main__":
   test.main()

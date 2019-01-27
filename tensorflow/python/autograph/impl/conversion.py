@@ -33,7 +33,6 @@ from tensorflow.python.autograph.converters import call_trees
 from tensorflow.python.autograph.converters import conditional_expressions
 from tensorflow.python.autograph.converters import continue_statements
 from tensorflow.python.autograph.converters import control_flow
-from tensorflow.python.autograph.converters import decorators
 from tensorflow.python.autograph.converters import directives
 from tensorflow.python.autograph.converters import error_handlers
 from tensorflow.python.autograph.converters import function_scopes
@@ -378,7 +377,13 @@ def function_to_graph(f,
       arg_types=arg_types,
       owner_type=owner_type)
   context = converter.EntityContext(namer, entity_info, program_ctx)
-  node = node_to_graph(node, context)
+  try:
+    node = node_to_graph(node, context)
+  except (ValueError, AttributeError, KeyError, NotImplementedError) as e:
+    # TODO(znado): raise InternalError
+    if not context.current_origin:
+      raise e
+    raise transformer.AutoGraphParseError(str(e), context.current_origin)
 
   if isinstance(node, gast.Lambda):
     new_name = namer.new_symbol('tf__lambda', ())
@@ -421,9 +426,6 @@ def node_to_graph(node, context):
   # source.
   # TODO(mdan): Is it feasible to reconstruct intermediate source code?
   context.info.source_code = None
-
-  if context.program.options.uses(converter.Feature.DECORATORS):
-    node = converter.apply_(node, context, decorators)
   node = converter.apply_(node, context, arg_defaults)
   node = converter.apply_(node, context, directives)
   node = converter.apply_(node, context, break_statements)
