@@ -562,6 +562,8 @@ class XlaBuilder {
       const XlaOp& operand,
       const std::vector<std::pair<int64, int64>>& source_target_pairs);
 
+  XlaOp ReplicaId();
+
   XlaOp SelectAndScatter(const XlaOp& operand, const XlaComputation& select,
                          absl::Span<const int64> window_dimensions,
                          absl::Span<const int64> window_strides,
@@ -1040,6 +1042,7 @@ class XlaBuilder {
   friend XlaOp CollectivePermute(
       const XlaOp& operand,
       const std::vector<std::pair<int64, int64>>& source_target_pairs);
+  friend XlaOp ReplicaId(XlaBuilder* builder);
   friend XlaOp SelectAndScatter(const XlaOp& operand,
                                 const XlaComputation& select,
                                 absl::Span<const int64> window_dimensions,
@@ -1699,6 +1702,9 @@ XlaOp CollectivePermute(
     const XlaOp& operand,
     const std::vector<std::pair<int64, int64>>& source_target_pairs);
 
+// Enqueues an operation that returns the replica ID.
+XlaOp ReplicaId(XlaBuilder* builder);
+
 // Enqueues an operation that scatters the `source` array to the selected
 // indices of each window.
 XlaOp SelectAndScatter(const XlaOp& operand, const XlaComputation& select,
@@ -1770,10 +1776,14 @@ XlaOp Imag(const XlaOp& operand);
 XlaOp Pow(const XlaOp& lhs, const XlaOp& rhs,
           absl::Span<const int64> broadcast_dimensions = {});
 
-// Enqueues an operator that tests if the operand's values are finite, i.e.,
-// not Inf or NaN. Defined only for floating-point types. Returns an array of
-// booleans with the same shape where entries are true iff the corresponding
-// entry was NaN.
+// Enqueues an operator that tests if the operand's values are finite, i.e., not
+// +/-Inf or NaN.  Returns an array of booleans with the same shape where
+// entries are true iff the corresponding entry was not infinite or NaN.
+//
+// Defined only for real-valued (i.e. not complex) floating-point types; raises
+// an error for other types.
+//
+// See also IsInf, IsPosInf, IsNegInf, and IsNan in lib/math.h.
 XlaOp IsFinite(const XlaOp& operand);
 
 // Enqueues an iota operation onto the computation.

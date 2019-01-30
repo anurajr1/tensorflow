@@ -179,6 +179,7 @@ py_library(
     deps = [
         ":mirrored_strategy",
         ":one_device_strategy",
+        ":parameter_server_strategy",
         ":tpu_strategy",
         "//tensorflow/contrib/cluster_resolver:cluster_resolver_pip",
         "//tensorflow/contrib/optimizer_v2:training",
@@ -404,6 +405,7 @@ cuda_py_test(
     additional_deps = [
         ":keras_test_lib",
     ],
+    shard_count = 4,
     tags = [
         "multi_and_single_gpu",
         "no_oss",  # http://b/119349471
@@ -568,7 +570,7 @@ distribute_py_test(
     srcs = ["keras_test.py"],
     full_precision = True,
     main = "keras_test.py",
-    shard_count = 16,
+    shard_count = 32,
     tags = [
         "multi_and_single_gpu",
         "no_oss",  # TODO(b/117919883): Fix python error.
