@@ -865,7 +865,7 @@ Status TrtNodeValidator::ConvertConstToWeights(
 }
 
 Converter::Converter(nvinfer1::INetworkDefinition* trt_network,
-                     int precision_mode, bool use_calibration)
+                     TrtPrecisionMode precision_mode, bool use_calibration)
     : trt_network_(trt_network),
       precision_mode_(precision_mode),
       use_calibration_(use_calibration) {
@@ -1128,7 +1128,7 @@ Status Converter::PrepareTensorForShape(const TRT_TensorOrWeights& input,
   } else {
     *tensor = CreateConstantLayer(input.weights(), dims);
     TFTRT_RETURN_ERROR_IF_NULLPTR(*tensor, "TF-TRT Internal Reshape");
-    if (precision_mode() == INT8MODE && !use_calibration()) {
+    if (precision_mode() == TrtPrecisionMode::INT8 && !use_calibration()) {
       // If we are in int8 mode and not calibrating, we need to explicitly set a
       // quantization range for the output tensor of the IConstantLayer. Here we
       // set the range to [min(weights), max(weights)].
@@ -1163,7 +1163,7 @@ void Converter::ProvideQuantizationRange(nvinfer1::ITensor* tensor,
 }
 
 void Converter::MaybeApplyQuantizationRanges() {
-  if (precision_mode() != INT8MODE) return;
+  if (precision_mode() != TrtPrecisionMode::INT8) return;
 
   // Infer ranges across marked ops.
   PropagateQuantizationRanges();
@@ -1478,7 +1478,7 @@ Status BinaryTensorOpWeight(OpConverterParams* params,
         const_cast<nvinfer1::ITensor*>(tensor), permutation, &tensor));
   }
 
-  if (params->converter->precision_mode() == FP16MODE) {
+  if (params->converter->precision_mode() == TrtPrecisionMode::FP16) {
     weights = ConvertFP32ToFP16(params->weight_store, weights);
   }
 
@@ -1521,7 +1521,7 @@ Status BinaryTensorOpWeight(OpConverterParams* params,
       // Because of this issue, fall back to BinaryTensorOpTensor if we are
       // doing INT8 with no calibration. There is most likely no performance
       // penalty by falling back here.
-      if (params->converter->precision_mode() == INT8MODE &&
+      if (params->converter->precision_mode() == TrtPrecisionMode::INT8 &&
           !params->converter->use_calibration()) {
         return errors::Unimplemented(
             "Intermediate quantization range cannot be determined without"
@@ -1571,20 +1571,48 @@ Status BinaryTensorOpWeight(OpConverterParams* params,
   return tensorflow::Status::OK();
 }
 
-enum class ConvolutionType { DEFAULT, DEPTHWISE_CONV };
-
-tensorflow::Status ConvertConv2DHelper(OpConverterParams* params, int group) {
+tensorflow::Status ConvertConv2DHelper(OpConverterParams* params, int group,
+                                       bool is_conv2d_backprop_input) {
   const auto& inputs = params->inputs;
   const auto& node_def = params->node_def;
-  if (inputs.size() != 2) {
-    return tensorflow::errors::InvalidArgument("Two inputs are expected for ",
-                                               node_def.op(), ", at ",
-                                               node_def.name());
-  }
-  if (inputs.at(0).is_weights()) {
-    return tensorflow::errors::Unimplemented(
-        node_def.op(), " is only implemented for tensors, not weights, at ",
-        node_def.name());
+  TRT_TensorOrWeights backprop_output_size;
+  const nvinfer1::ITensor* tensor = nullptr;
+  // TODO(tmorris): Add helper functions for validating inputs to avoid code
+  // duplication.
+  if (is_conv2d_backprop_input) {
+    // Conv2DBackpropInput has 3 inputs: input_sizes, filter, and out_backprop.
+    // In the case of conv2d_transpose, these correspond to: output size,
+    // filter, and input.
+    if (inputs.size() != 3) {
+      return tensorflow::errors::InvalidArgument(
+          "Three inputs are expected for ", node_def.op(), ", at ",
+          node_def.name());
+    }
+    if (inputs.at(0).is_tensor()) {
+      return tensorflow::errors::Unimplemented(
+          "input_sizes for ", node_def.op(), " must be constant weights, at ",
+          node_def.name());
+    }
+    if (inputs.at(2).is_weights()) {
+      return tensorflow::errors::Unimplemented(
+          node_def.op(), " is only implemented for tensors, not weights, at ",
+          node_def.name());
+    }
+    backprop_output_size = inputs.at(0);
+    tensor = inputs.at(2).tensor();
+  } else {
+    // Regular convolution has 2 inputs: input, filter.
+    if (inputs.size() != 2) {
+      return tensorflow::errors::InvalidArgument("Two inputs are expected for ",
+                                                 node_def.op(), ", at ",
+                                                 node_def.name());
+    }
+    if (inputs.at(0).is_weights()) {
+      return tensorflow::errors::Unimplemented(
+          node_def.op(), " is only implemented for tensors, not weights, at ",
+          node_def.name());
+    }
+    tensor = inputs.at(0).tensor();
   }
   if (inputs.at(1).is_tensor()) {
     return tensorflow::errors::Unimplemented("Kernel for ", node_def.op(),
@@ -1613,6 +1641,11 @@ tensorflow::Status ConvertConv2DHelper(OpConverterParams* params, int group) {
         node_def.name());
   }
   const nvinfer1::DimsHW dilation(tf_dilations[h_index], tf_dilations[w_index]);
+  if (is_conv2d_backprop_input && (dilation.d[0] != 1 || dilation.d[1] != 1)) {
+    return tensorflow::errors::Unimplemented(
+        "Dilation with Conv2DBackpropInput (conv2d_transpose) is not supported",
+        ", at ", node_def.name());
+  }
 
   const auto tf_stride = attrs.get<std::vector<int>>("strides");
   if (tf_stride.size() != 4) {
@@ -1628,8 +1661,6 @@ tensorflow::Status ConvertConv2DHelper(OpConverterParams* params, int group) {
   const nvinfer1::DimsHW stride(tf_stride[h_index], tf_stride[w_index]);
   if (params->validation_only) return tensorflow::Status::OK();
 
-  const nvinfer1::ITensor* tensor = inputs.at(0).tensor();
-
   // Transpose to NCHW (NCHW is required for IConvLayer).
   const bool need_transpose = (data_format == "NHWC");
   if (need_transpose) {
@@ -1639,19 +1670,23 @@ tensorflow::Status ConvertConv2DHelper(OpConverterParams* params, int group) {
   // Dimensions of transposed tensor.
   const auto tensor_dim = tensor->getDimensions();
 
-  // For depthwise convolution, group will be 0 so set num_groups to size of
-  // input's channel dim. For a non-depthwise conv, num_groups will be 1.
+  // group == 0 signifies that this is a depthwise convolution, so set
+  // num_groups to size of input's channel dim. For a non-depthwise conv,
+  // num_groups will be 1.
   const int num_groups = (group == 0) ? tensor_dim.d[0] : group;
 
-  if (params->converter->precision_mode() == FP16MODE) {
-    weights_rsck =
-        ConvertFP32ToFP16(params->weight_store, inputs.at(1).weights());
+  if (params->converter->precision_mode() == TrtPrecisionMode::FP16) {
+    weights_rsck = ConvertFP32ToFP16(params->weight_store, weights_rsck);
   }
+  // For conv, TF weights are RSCK, and TRT expects KCRS.
+  // For backprop, TF weights are RSKC, and TRT expects CKRS.
+  // Therefore, this reorder will work for both cases.
   TRT_ShapedWeights weights =
       params->weight_store->GetTempWeights(weights_rsck);
   ReorderRSCKToKCRS(weights_rsck, &weights, num_groups);
   TRT_ShapedWeights biases(weights.type_);
-  const int noutput = weights.shape_.d[0] * num_groups;
+  const int output_axis = is_conv2d_backprop_input ? 1 : 0;
+  const int noutput = weights.shape_.d[output_axis] * num_groups;
   nvinfer1::DimsHW kernel_size;
   kernel_size.h() = weights.shape_.d[2];
   kernel_size.w() = weights.shape_.d[3];
@@ -1662,9 +1697,23 @@ tensorflow::Status ConvertConv2DHelper(OpConverterParams* params, int group) {
     nvinfer1::DimsHW effective_kernel_size = kernel_size;
     effective_kernel_size.h() += (kernel_size.h() - 1) * (dilation.h() - 1);
     effective_kernel_size.w() += (kernel_size.w() - 1) * (dilation.w() - 1);
-    padding = CreateSamePadding(
-        stride, effective_kernel_size,
-        {static_cast<int>(tensor_dim.d[1]), static_cast<int>(tensor_dim.d[2])});
+    std::vector<int64_t> input_dims;
+    if (is_conv2d_backprop_input) {
+      // For backprop, calculate padding based on "input_sizes" input, which
+      // actually corresponds to output size. ("input_sizes" makes sense in the
+      // context of Conv2DBackpropInput).
+      // We use h_index and w_index instead of 1 and 2 because we havent
+      // transposed backprop_output_size along with the input.
+      auto output_size_weights = static_cast<int*>(
+          const_cast<void*>(backprop_output_size.weights().GetValues()));
+      input_dims = {output_size_weights[h_index], output_size_weights[w_index]};
+    } else {
+      // Use 1 and 2 because tensor_dim has the dimensions of the transposed
+      // input.
+      input_dims = {static_cast<int>(tensor_dim.d[1]),
+                    static_cast<int>(tensor_dim.d[2])};
+    }
+    padding = CreateSamePadding(stride, effective_kernel_size, input_dims);
   } else {
     padding = {{0, 0}, {0, 0}};
   }
@@ -1683,17 +1732,32 @@ tensorflow::Status ConvertConv2DHelper(OpConverterParams* params, int group) {
   }
 
   // Add convolution.
-  nvinfer1::IConvolutionLayer* layer =
-      params->converter->network()->addConvolution(
-          *const_cast<nvinfer1::ITensor*>(tensor), noutput, kernel_size,
-          weights.GetTrtWeights(), biases.GetTrtWeights());
-  TFTRT_RETURN_ERROR_IF_NULLPTR(layer, node_def.name());
-  layer->setStride(stride);
-  layer->setPadding({padding[0].first, padding[1].first});
-  layer->setName(node_def.name().c_str());
-  layer->setNbGroups(num_groups);
-  layer->setDilation(dilation);
-  const nvinfer1::ITensor* output_tensor = layer->getOutput(0);
+  nvinfer1::ILayer* conv_layer = nullptr;
+  if (is_conv2d_backprop_input) {
+    nvinfer1::IDeconvolutionLayer* layer =
+        params->converter->network()->addDeconvolution(
+            *const_cast<nvinfer1::ITensor*>(tensor), noutput, kernel_size,
+            weights.GetTrtWeights(), biases.GetTrtWeights());
+    TFTRT_RETURN_ERROR_IF_NULLPTR(layer, node_def.name());
+    layer->setStride(stride);
+    layer->setPadding({padding[0].first, padding[1].first});
+    layer->setName(node_def.name().c_str());
+    layer->setNbGroups(num_groups);
+    conv_layer = layer;
+  } else {
+    nvinfer1::IConvolutionLayer* layer =
+        params->converter->network()->addConvolution(
+            *const_cast<nvinfer1::ITensor*>(tensor), noutput, kernel_size,
+            weights.GetTrtWeights(), biases.GetTrtWeights());
+    TFTRT_RETURN_ERROR_IF_NULLPTR(layer, node_def.name());
+    layer->setStride(stride);
+    layer->setPadding({padding[0].first, padding[1].first});
+    layer->setName(node_def.name().c_str());
+    layer->setNbGroups(num_groups);
+    layer->setDilation(dilation);
+    conv_layer = layer;
+  }
+  const nvinfer1::ITensor* output_tensor = conv_layer->getOutput(0);
 
   // Restore transpose.
   if (need_transpose) {
@@ -1704,18 +1768,6 @@ tensorflow::Status ConvertConv2DHelper(OpConverterParams* params, int group) {
   params->outputs->push_back(
       TRT_TensorOrWeights(const_cast<nvinfer1::ITensor*>(output_tensor)));
   return tensorflow::Status::OK();
-}
-
-tensorflow::Status ConvertConv2DHelper(OpConverterParams* params,
-                                       ConvolutionType type) {
-  switch (type) {
-    case ConvolutionType::DEFAULT:
-      return ConvertConv2DHelper(params, 1);
-    case ConvolutionType::DEPTHWISE_CONV:
-      return ConvertConv2DHelper(params, 0);
-  }
-  return tensorflow::errors::Unimplemented("Unsupported convolution type, at ",
-                                           params->node_def.name());
 }
 
 Status BinaryTensorOpTensor(OpConverterParams* params,
@@ -2329,11 +2381,15 @@ tensorflow::Status ConvertStridedSlice(OpConverterParams* params) {
 }
 
 tensorflow::Status ConvertConv2D(OpConverterParams* params) {
-  return ConvertConv2DHelper(params, ConvolutionType::DEFAULT);
+  return ConvertConv2DHelper(params, 1, /*is_conv2d_backprop_input=*/false);
 }
 
 tensorflow::Status ConvertConv2DDepthwise(OpConverterParams* params) {
-  return ConvertConv2DHelper(params, ConvolutionType::DEPTHWISE_CONV);
+  return ConvertConv2DHelper(params, 0, /*is_conv2d_backprop_input=*/false);
+}
+
+tensorflow::Status ConvertConv2DBackpropInput(OpConverterParams* params) {
+  return ConvertConv2DHelper(params, 1, /*is_conv2d_backprop_input=*/true);
 }
 
 tensorflow::Status ConvertPool(OpConverterParams* params) {
@@ -2675,7 +2731,7 @@ tensorflow::Status ConvertBiasAdd(OpConverterParams* params) {
   }
 
   TRT_ShapedWeights weights = inputs.at(1).weights();
-  if (params->converter->precision_mode() == FP16MODE) {
+  if (params->converter->precision_mode() == TrtPrecisionMode::FP16) {
     weights = ConvertFP32ToFP16(params->weight_store, weights);
   }
   nvinfer1::ScaleMode mode = nvinfer1::ScaleMode::kCHANNEL;
@@ -2908,7 +2964,7 @@ tensorflow::Status ConvertUnary(OpConverterParams* params) {
     //   x -> [Sqrt] -> sqrt(x) -> [Recip] -> 1/sqrt(x)
     //                     ^
     //               need range here
-    if (params->converter->precision_mode() == INT8MODE &&
+    if (params->converter->precision_mode() == TrtPrecisionMode::INT8 &&
         !params->converter->use_calibration()) {
       return errors::Unimplemented(
           "Intermediate quantization range cannot be determined without"
@@ -3547,31 +3603,34 @@ tensorflow::Status ConvertSoftmax(OpConverterParams* params) {
 
 tensorflow::Status ConvertTopK(OpConverterParams* params) {
   const auto& inputs = params->inputs;
+  if (inputs.size() != 2 || !inputs.at(0).is_tensor() ||
+      !inputs.at(1).is_weights()) {
+    return errors::InvalidArgument("Input expects tensor and weights, at ",
+                                   params->node_def.name());
+  }
+
   const auto& node_def = params->node_def;
   const nvinfer1::ITensor* tensor = inputs.at(0).tensor();
-
-  int nbDims = tensor->getDimensions().nbDims;
-  if (nbDims == 0) {
-    return tensorflow::errors::InvalidArgument(
-        "TensorRT TopK cannot apply on batch dimension, at" + node_def.name());
+  const int num_dims = tensor->getDimensions().nbDims;
+  if (num_dims == 0) {
+    return errors::InvalidArgument(
+        "TensorRT TopK cannot apply on batch dimension, at", node_def.name());
   }
 
   TRT_ShapedWeights k_w = inputs.at(1).weights();
-  int k = *(static_cast<int*>(const_cast<void*>(k_w.GetValues())));
-
-  nvinfer1::TopKOperation op;
-  uint32_t reducedAxes = 0;
-  if (node_def.op() == "TopKV2") {
-    op = nvinfer1::TopKOperation::kMAX;
-    reducedAxes |= 1 << (nbDims - 1);
-  } else {
-    return tensorflow::errors::Unimplemented(
-        "Operation: ", node_def.op(),
-        " not implemented, at: ", node_def.name());
+  if (k_w.count() != 1) {
+    return errors::InvalidArgument("k value of TopK should be a scalar, at",
+                                   node_def.name());
   }
+  // Note that ITopKLayer always have sorted outputs, so we don't need to handle
+  // the 'sorted' attribute of the node.
+  if (params->validation_only) return Status::OK();
 
+  const nvinfer1::TopKOperation op = nvinfer1::TopKOperation::kMAX;
+  const int k = *(static_cast<int*>(const_cast<void*>(k_w.GetValues())));
+  const uint32_t reduce_axes = 1 << (num_dims - 1);
   nvinfer1::ITopKLayer* layer = params->converter->network()->addTopK(
-      *const_cast<nvinfer1::ITensor*>(tensor), op, k, reducedAxes);
+      *const_cast<nvinfer1::ITensor*>(tensor), op, k, reduce_axes);
   TFTRT_RETURN_ERROR_IF_NULLPTR(layer, node_def.name());
 
   nvinfer1::ITensor* output_value_tensor = layer->getOutput(0);
@@ -3588,6 +3647,7 @@ static void RegisterValidatableOpConverters(
   (*registration)["ConcatV2"] = ConvertConcat;
   (*registration)["Const"] = ConvertConst;
   (*registration)["Conv2D"] = ConvertConv2D;
+  (*registration)["Conv2DBackpropInput"] = ConvertConv2DBackpropInput;
   (*registration)["DepthwiseConv2dNative"] = ConvertConv2DDepthwise;
   (*registration)["ExpandDims"] = ConvertExpandDims;
   (*registration)["MatMul"] = ConvertMatMul;
@@ -3598,6 +3658,7 @@ static void RegisterValidatableOpConverters(
   (*registration)["Squeeze"] = ConvertSqueeze;
   (*registration)["StridedSlice"] = ConvertStridedSlice;
   (*registration)["Transpose"] = ConvertTranspose;
+  (*registration)["TopKV2"] = ConvertTopK;
 
   for (auto quantization_op_type :
        {"QuantizeAndDequantizeV2", "QuantizeAndDequantizeV3",
@@ -3644,14 +3705,13 @@ void Converter::RegisterOpConverters() {
   op_registry_["Mean"] = ConvertReduce;
   op_registry_["Softmax"] = ConvertSoftmax;
   op_registry_["BatchMatMul"] = ConvertBatchMatMul;
-  op_registry_["TopKV2"] = ConvertTopK;
 
   plugin_converter_ = ConvertPlugin;
 }
 
 tensorflow::Status ConvertGraphDefToEngine(
-    const tensorflow::GraphDef& gdef, int precision_mode, int max_batch_size,
-    size_t max_workspace_size_bytes,
+    const tensorflow::GraphDef& gdef, TrtPrecisionMode precision_mode,
+    int max_batch_size, size_t max_workspace_size_bytes,
     const std::vector<tensorflow::PartialTensorShape>& input_shapes,
     Logger* logger, nvinfer1::IGpuAllocator* allocator,
     TRTInt8Calibrator* calibrator,
@@ -3666,9 +3726,9 @@ tensorflow::Status ConvertGraphDefToEngine(
   builder->setMaxBatchSize(max_batch_size);
   builder->setMaxWorkspaceSize(max_workspace_size_bytes);
   builder->setGpuAllocator(allocator);
-  if (precision_mode == FP16MODE) {
+  if (precision_mode == TrtPrecisionMode::FP16) {
     builder->setHalf2Mode(true);
-  } else if (precision_mode == INT8MODE) {
+  } else if (precision_mode == TrtPrecisionMode::INT8) {
     builder->setInt8Mode(true);
     if (use_calibration) {
       builder->setInt8Calibrator(calibrator);

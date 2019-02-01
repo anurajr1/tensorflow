@@ -537,6 +537,14 @@ class TFAPIChangeSpec(ast_edits.APIChangeSpec):
             "tf.data.experimental.unbatch",
         "tf.contrib.data.unique":
             "tf.data.experimental.unique",
+        "tf.contrib.framework.nest.assert_same_structure":
+            "tf.nest.assert_same_structure",
+        "tf.contrib.framework.nest.flatten":
+            "tf.nest.flatten",
+        "tf.contrib.framework.nest.map_structure":
+            "tf.nest.map_structure",
+        "tf.contrib.framework.nest.pack_sequence_as":
+            "tf.nest.pack_sequence_as",
         "tf.contrib.framework.constant_value":
             "tf.get_static_value",
         "tf.contrib.saved_model.load_keras_model":
@@ -687,6 +695,8 @@ class TFAPIChangeSpec(ast_edits.APIChangeSpec):
             "tf.compat.v1.debugging.assert_rank_in",
         "tf.assert_rank":
             "tf.compat.v1.assert_rank",
+        "tf.contrib.framework.argsort":
+            "tf.argsort",
     }
     # pylint: enable=line-too-long
 
@@ -798,6 +808,8 @@ class TFAPIChangeSpec(ast_edits.APIChangeSpec):
         "tf.nn.fractional_avg_pool",
         "tf.nn.fractional_max_pool",
         "tf.image.sample_distorted_bounding_box",
+        "tf.gradients",
+        "tf.hessians",
     }
 
     # Functions that were reordered should be changed to the new keyword args
@@ -805,14 +817,18 @@ class TFAPIChangeSpec(ast_edits.APIChangeSpec):
     # positional arguments yourself, this could do the wrong thing.
     self.function_reorders = reorders_v2.reorders
 
+    contrib_warning = (
+        ast_edits.ERROR,
+        "<function name> cannot be converted automatically. tf.contrib will not"
+        " be distributed with TensorFlow 2.0, please consider an alternative in"
+        " non-contrib TensorFlow, a community-maintained repository, or fork "
+        "the required code."
+    )
+
     decay_function_comment = (
         ast_edits.INFO,
-        "<function name> has been changed to return a callable instead "
-        "of a tensor when graph building, but its functionality remains "
-        "unchanged during eager execution (returns a callable like "
-        "before). The converter cannot detect and fix this reliably, so "
-        "this usage has been converted to compat.v1 (even though it may already"
-        " be correct).\n"
+        "To use learning rate decay schedules with TensorFlow 2.0, switch to "
+        "the schedules in `tf.keras.optimizers.schedules`.\n"
     )
 
     assert_return_type_comment = (
@@ -852,27 +868,27 @@ class TFAPIChangeSpec(ast_edits.APIChangeSpec):
         "compat.v1 for backward compatibility. Please update these calls to "
         "the TF 2.0 versions.")
 
-# This could be done with a _rename_if_arg_not_found_transformer
+    # This could be done with a _rename_if_arg_not_found_transformer
     deprecate_partition_strategy_comment = (
         ast_edits.WARNING,
         "`partition_strategy` has been removed from <function name>. "
         " The 'div' strategy will be used by default.")
 
-# TODO(b/118888586): add default value change to update script.
+    # TODO(b/118888586): add default value change to update script.
     default_loss_reduction_changed = (
         ast_edits.WARNING,
         "default value of loss_reduction has been changed to "
         "SUM_OVER_BATCH_SIZE.\n"
     )
 
-# make change instead
+    # make change instead
     uniform_unit_scaling_initializer_comment = (
         ast_edits.ERROR,
         "uniform_unit_scaling_initializer has been removed. Please use"
         " tf.initializers.variance_scaling instead with distribution=uniform "
         "to get equivalent behaviour.")
 
-# Make change instead (issue warning about strip_...)
+    # Make change instead (issue warning about strip_...)
     export_saved_model_renamed = (
         ast_edits.ERROR,
         "(Manual edit required) Please rename the method export_savedmodel() "
@@ -1303,6 +1319,10 @@ class TFAPIChangeSpec(ast_edits.APIChangeSpec):
             _add_argument_transformer,
             arg_name="data_format",
             arg_value_ast=ast.Str("NHWC")),
+    }
+
+    self.module_deprecations = {
+        "tf.contrib": contrib_warning,
     }
 
 
