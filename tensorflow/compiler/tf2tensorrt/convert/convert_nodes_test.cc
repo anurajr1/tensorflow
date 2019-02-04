@@ -21,7 +21,10 @@ limitations under the License.
 
 #include <gmock/gmock.h>
 #include <gtest/gtest.h>
+#include "absl/strings/match.h"
+#include "absl/strings/numbers.h"
 #include "absl/strings/str_cat.h"
+#include "absl/strings/string_view.h"
 #include "absl/types/span.h"
 #include "tensorflow/cc/framework/ops.h"
 #include "tensorflow/cc/framework/scope.h"
@@ -37,6 +40,7 @@ limitations under the License.
 #include "tensorflow/core/grappler/costs/graph_properties.h"
 #include "tensorflow/core/lib/core/status.h"
 #include "tensorflow/core/lib/core/status_test_util.h"
+#include "tensorflow/core/lib/strings/str_util.h"
 #include "tensorflow/core/lib/strings/strcat.h"
 #include "tensorflow/core/platform/protobuf.h"
 #include "tensorflow/core/platform/test.h"
@@ -928,6 +932,57 @@ TEST_F(ConverterTest, CreateConstantLayer) {
   }
 }
 
+class ConvertGraphDefToEngineTest : public ::testing::Test {
+ public:
+  Status RunConvertGraphDefToEngine(Scope* s) {
+    GraphDef gdef;
+    TF_EXPECT_OK(s->ToGraphDef(&gdef));
+    std::vector<tensorflow::PartialTensorShape> input_shapes;
+    int batch_size = -1;
+    for (const NodeDef& node : gdef.node()) {
+      absl::string_view node_name(node.name());
+      if (str_util::ConsumePrefix(&node_name, kInputPHName)) {
+        int port = -1;
+        EXPECT_TRUE(absl::SimpleAtoi(node_name, &port)) << node.name();
+        if (input_shapes.size() < port + 1) input_shapes.resize(port + 1);
+        input_shapes[port] =
+            PartialTensorShape(node.attr().at("shape").shape());
+        if (batch_size == -1) {
+          batch_size = input_shapes[port].dim_size(0);
+        } else {
+          EXPECT_EQ(batch_size, input_shapes[port].dim_size(0));
+        }
+      }
+    }
+    // TODO(laigd): execute the engine and get outputs.
+    return ConvertGraphDefToEngine(
+        gdef, TrtPrecisionMode::FP32, /*max_batch_size=*/1,
+        /*max_workspace_size_bytes=*/64 << 20, input_shapes, &logger_,
+        /*allocator=*/nullptr, /*calibrator=*/nullptr, &engine_,
+        /*use_calibration=*/false, /*convert_successfully=*/nullptr);
+  }
+
+ protected:
+  TrtUniquePtrType<nvinfer1::ICudaEngine> engine_;
+
+ private:
+  Logger logger_;
+};
+
+TEST_F(ConvertGraphDefToEngineTest, IdentityGraph) {
+  Scope s = Scope::NewRootScope();
+  auto input = ops::Placeholder(s.WithOpName(StrCat(kInputPHName, 0)), DT_FLOAT,
+                                ops::Placeholder::Shape({1, 1}));
+  auto output = ops::Identity(s.WithOpName("identity1"), input);
+  output = ops::Identity(s.WithOpName("identity2"), output);
+  output = ops::Identity(s.WithOpName(StrCat(kOutputPHName, 0)), output);
+  // If the converter marks the input tensor as output tensor, the conversion
+  // below will fail with:
+  // > TensorRTOutputPH_0 cannot be both input and output
+  // > Network must have at least one output
+  TF_EXPECT_OK(RunConvertGraphDefToEngine(&s));
+}
+
 // Input/output data format for OpConverterTest::BuildAndRun().
 struct InputOutputData {
   void* Buffer() const {
@@ -1292,7 +1347,7 @@ TEST_F(OpConverterTest, ConvertTranspose) {
     NodeDef node_def = MakeNodeDef("my_transpose", "Transpose", {});
     RunValidationAndConversion(
         node_def, error::INVALID_ARGUMENT,
-        "Input expects tensor and weights, at my_transpose");
+        "Transpose got 0 inputs but expected 2, at my_transpose");
   }
 
   // Get the NodeDef for Transpose.
@@ -1308,8 +1363,8 @@ TEST_F(OpConverterTest, ConvertTranspose) {
     AddTestTensor("input", {1, 2, 3});
     AddTestTensor("weights", {3});
     RunValidationAndConversion(
-        node_def, error::INVALID_ARGUMENT,
-        "Input expects tensor and weights, at my_transpose");
+        node_def, error::UNIMPLEMENTED,
+        "The input \"perm\" for Transpose must be a constant, at my_transpose");
   }
   {
     // Transpose at batch dimension, should fail.
@@ -1354,7 +1409,7 @@ TEST_F(OpConverterTest, ConvertReshape) {
     NodeDef node_def = MakeNodeDef("my_reshape", "Reshape", {});
     RunValidationAndConversion(
         node_def, error::INVALID_ARGUMENT,
-        "Input expects weights for shape, at my_reshape");
+        "Reshape got 0 inputs but expected 2, at my_reshape");
   }
 
   // Get the NodeDef for Reshape.
@@ -1370,8 +1425,8 @@ TEST_F(OpConverterTest, ConvertReshape) {
     AddTestTensor("input", {1, 2, 3});
     AddTestTensor("weights", {3});
     RunValidationAndConversion(
-        node_def, error::INVALID_ARGUMENT,
-        "Input expects weights for shape, at my_reshape");
+        node_def, error::UNIMPLEMENTED,
+        "The input \"shape\" for Reshape must be a constant, at my_reshape");
   }
   {
     // Reshape to scalar, should fail.
@@ -1446,7 +1501,7 @@ TEST_F(OpConverterTest, ConvertMatMul) {
     NodeDef node_def = MakeNodeDef("my_matmul", "MatMul", {});
     RunValidationAndConversion(
         node_def, error::INVALID_ARGUMENT,
-        "Input expects tensor and weights, at my_matmul");
+        "MatMul got 0 inputs but expected 2, at my_matmul");
   }
 
   // Get the NodeDef for MatMul.
@@ -1590,7 +1645,7 @@ TEST_F(OpConverterTest, ConvertBiasAdd) {
     NodeDef node_def = MakeNodeDef("my_biasadd", "BiasAdd", {});
     RunValidationAndConversion(
         node_def, error::INVALID_ARGUMENT,
-        "Input expects tensor and weights, at my_biasadd");
+        "BiasAdd got 0 inputs but expected 2, at my_biasadd");
   }
 
   // OK. Note that kINT32 is not supported by IScaleLayer, so we don't test
@@ -1873,7 +1928,9 @@ TEST_F(OpConverterTest, ConvertBinary) {
     NodeDef node_def = MakeNodeDef("my_add", "Add", {num_inputs, "input"});
     AddTestTensor("input", {1}, /*batch_size=*/1, nvinfer1::DataType::kFLOAT);
     RunValidationAndConversion(node_def, error::INVALID_ARGUMENT,
-                               "Binary ops require two inputs, at my_add");
+                               StrCat("Add got ", std::to_string(num_inputs),
+                                      " inputs but expected 2, at my_add")
+                                   .c_str());
   }
   {
     // Both inputs are weights.
@@ -1943,14 +2000,18 @@ TEST_F(OpConverterTest, ConvertBinary) {
 }
 
 TEST_F(OpConverterTest, ConvertQuantize) {
-  for (const string& op :
-       {"FakeQuantWithMinMaxArgs", "FakeQuantWithMinMaxVars",
-        "QuantizeAndDequantizeV2", "QuantizeAndDequantizeV3"}) {
+  const std::pair<string, int> op_with_num_inputs[4] = {
+      {"FakeQuantWithMinMaxArgs", 1},
+      {"FakeQuantWithMinMaxVars", 3},
+      {"QuantizeAndDequantizeV2", 3},
+      {"QuantizeAndDequantizeV3", 4}};
+  for (const auto& pair : op_with_num_inputs) {
     // Input list is empty, should fail.
-    NodeDef node_def = MakeNodeDef("my_quantize", op, {});
+    NodeDef node_def = MakeNodeDef("my_quantize", pair.first, {});
     RunValidationAndConversion(
         node_def, error::INVALID_ARGUMENT,
-        StrCat("Invalid number of inputs for ", op, ", at my_quantize")
+        StrCat(pair.first, " got 0 inputs but expected ",
+               std::to_string(pair.second), ", at my_quantize")
             .c_str());
   }
   {
@@ -2037,9 +2098,9 @@ TEST_F(OpConverterTest, ConvertQuantize) {
     AddTestTensor("weights_min", {1});
     AddTestTensor("weights_max", {1});
     RunValidationAndConversion(
-        node_def, error::INVALID_ARGUMENT,
-        "Min and max inputs for QuantizeAndDequantizeV2 must be weights not "
-        "tensors, at my_quantize");
+        node_def, error::UNIMPLEMENTED,
+        "The input \"input_min\" for QuantizeAndDequantizeV2 must be a constant"
+        ", at my_quantize");
   }
   {
     // QuantizeAndDequantizeV3 ranges set via inputs, ok.
@@ -2072,7 +2133,7 @@ TEST_F(OpConverterTest, ConvertRelu6) {
     NodeDef node_def = MakeNodeDef("my_relu6", "Relu6", {});
     RunValidationAndConversion(
         node_def, error::INVALID_ARGUMENT,
-        "Invalid number of inputs for Relu6, at my_relu6");
+        "Relu6 got 0 inputs but expected 1, at my_relu6");
   }
 
   // Get the NodeDef for Relu6.
@@ -2086,7 +2147,7 @@ TEST_F(OpConverterTest, ConvertRelu6) {
     AddTestWeights<float>("input", {1}, {1.0f});
     RunValidationAndConversion(
         node_def, error::UNIMPLEMENTED,
-        "Relu6 is only implemented for tensors, not weights, at my_relu6");
+        "The input \"input\" for Relu6 must be a tensor, at my_relu6");
   }
   {
     // Clip tensor values and set quantization ranges, ok.
@@ -2143,8 +2204,9 @@ TEST_F(OpConverterTest, ConvertSquare) {
   {
     // Input list is empty, should fail.
     NodeDef node_def = MakeNodeDef("my_square", "Square", {});
-    RunValidationAndConversion(node_def, error::INVALID_ARGUMENT,
-                               "Square expects one input, at my_square");
+    RunValidationAndConversion(
+        node_def, error::INVALID_ARGUMENT,
+        "Square got 0 inputs but expected 1, at my_square");
   }
   {
     // Input is weights, should fail.
@@ -2156,7 +2218,7 @@ TEST_F(OpConverterTest, ConvertSquare) {
     AddTestWeights<float>("input", {1, 2, 3}, {1, 2, 3, 4, -5, 6});
     RunValidationAndConversion(
         node_def, error::UNIMPLEMENTED,
-        "Square is only implemented for tensors, at my_square");
+        "The input \"x\" for Square must be a tensor, at my_square");
   }
 
   // OK. Note that kINT32 is not supported by IElementWiseLayer, so we don't
@@ -2172,7 +2234,7 @@ TEST_F(OpConverterTest, ConvertActivation) {
     // Input list is empty, should fail.
     NodeDef node_def = MakeNodeDef("my_act", "Relu", {});
     RunValidationAndConversion(node_def, error::INVALID_ARGUMENT,
-                               "Relu expects one input, at my_act");
+                               "Relu got 0 inputs but expected 1, at my_act");
   }
   {
     // Input is weights, should fail.
@@ -2184,7 +2246,7 @@ TEST_F(OpConverterTest, ConvertActivation) {
     AddTestWeights<int32>("input", {1, 2, 3}, {-3, -2, -1, 0, 1, 2});
     RunValidationAndConversion(
         node_def, error::UNIMPLEMENTED,
-        "Relu is only implemented for tensors, at my_act");
+        "The input \"input\" for Relu must be a tensor, at my_act");
   }
 
   // Get nodedef for activation layer.
@@ -2246,7 +2308,7 @@ TEST_F(OpConverterTest, ConvertExpandDims) {
     NodeDef node_def = MakeNodeDef("my_expanddims", "ExpandDims", {});
     RunValidationAndConversion(
         node_def, error::INVALID_ARGUMENT,
-        "Two inputs expected for ExpandDims, at my_expanddims");
+        "ExpandDims got 0 inputs but expected 2, at my_expanddims");
   }
 
   // Get the NodeDef for ExpandDims.
@@ -2261,18 +2323,18 @@ TEST_F(OpConverterTest, ConvertExpandDims) {
     Reset();
     AddTestWeights<int32>("input", {1, 2, 3}, {1, 2, 3, 4, 5, 6});
     AddTestWeights<int32>("weights", {1}, {1});
-    RunValidationAndConversion(
-        node_def, error::UNIMPLEMENTED,
-        "ExpandDims expects tensor for input, at my_expanddims");
+    RunValidationAndConversion(node_def, error::UNIMPLEMENTED,
+                               "The input \"input\" for ExpandDims must be a "
+                               "tensor, at my_expanddims");
   }
   {
     // Axis is a tensor, should fail.
     Reset();
     AddTestTensor("input", {1, 2, 3});
     AddTestTensor("weights", {3});
-    RunValidationAndConversion(
-        node_def, error::INVALID_ARGUMENT,
-        "ExpandDims expects weights for axis, at my_expanddims");
+    RunValidationAndConversion(node_def, error::UNIMPLEMENTED,
+                               "The input \"axis\" for ExpandDims must be a "
+                               "constant, at my_expanddims");
   }
   {
     // Add dim at batch dimension, should fail.
@@ -2361,8 +2423,9 @@ TEST_F(OpConverterTest, ConvertSqueeze) {
   {
     // Input list is empty, should fail.
     NodeDef node_def = MakeNodeDef("my_squeeze", "Squeeze", {});
-    RunValidationAndConversion(node_def, error::INVALID_ARGUMENT,
-                               "One input expected for Squeeze, at my_squeeze");
+    RunValidationAndConversion(
+        node_def, error::INVALID_ARGUMENT,
+        "Squeeze got 0 inputs but expected 1, at my_squeeze");
   }
   {
     // No attrs, should fail.
@@ -2395,7 +2458,7 @@ TEST_F(OpConverterTest, ConvertSqueeze) {
     AddTestWeights<float>("input", {1, 2, 3}, {1, 2, 3, 4, 5, 6});
     RunValidationAndConversion(
         node_def, error::UNIMPLEMENTED,
-        "Squeeze expects tensor for input, at my_squeeze");
+        "The input \"input\" for Squeeze must be a tensor, at my_squeeze");
   }
   {
     // Squeeze batch dim, should fail.
@@ -2485,7 +2548,7 @@ TEST_F(OpConverterTest, ConvertStridedSlice) {
     NodeDef node_def = MakeNodeDef("my_strided_slice", "StridedSlice", {});
     RunValidationAndConversion(
         node_def, error::INVALID_ARGUMENT,
-        "StridedSlice expects 4 inputs, at my_strided_slice");
+        "StridedSlice got 0 inputs but expected 4, at my_strided_slice");
   }
 
   // Get nodedef for StridedSlice layer.
@@ -2516,9 +2579,9 @@ TEST_F(OpConverterTest, ConvertStridedSlice) {
     AddTestWeights<int32>("begin", {4}, {0, 0, 0, 0});
     AddTestWeights<int32>("end", {4}, {1, 1, 2, 3});
     AddTestWeights<int32>("strides", {4}, {1, 1, 1, 1});
-    RunValidationAndConversion(
-        node_def, error::UNIMPLEMENTED,
-        "StridedSlice is only implemented for tensors, at my_strided_slice");
+    RunValidationAndConversion(node_def, error::UNIMPLEMENTED,
+                               "The input \"input\" for StridedSlice must be a "
+                               "tensor, at my_strided_slice");
   }
   {
     // Begin, end, strides are tensors, should fail.
@@ -2529,8 +2592,8 @@ TEST_F(OpConverterTest, ConvertStridedSlice) {
     AddTestTensor("end", {4});
     AddTestTensor("strides", {4});
     RunValidationAndConversion(
-        node_def, error::INVALID_ARGUMENT,
-        "StridedSlice expects weights for begin, end, and strides, at "
+        node_def, error::UNIMPLEMENTED,
+        "The input \"begin\" for StridedSlice must be a constant, at "
         "my_strided_slice");
   }
   {
@@ -2763,7 +2826,7 @@ TEST_F(OpConverterTest, ConvertConv2D) {
     NodeDef node_def = MakeNodeDef("my_conv2d", "Conv2D", {});
     RunValidationAndConversion(
         node_def, error::INVALID_ARGUMENT,
-        "Two inputs are expected for Conv2D, at my_conv2d");
+        "Conv2D got 0 inputs but expected 2, at my_conv2d");
   }
 
   // Get nodedef for Conv2D layer.
@@ -2801,7 +2864,7 @@ TEST_F(OpConverterTest, ConvertConv2D) {
     AddTestWeights<float>("weights", {3, 3, 1, 1}, {1, 2, 3, 4, 5, 6, 7, 8, 9});
     RunValidationAndConversion(
         node_def, error::UNIMPLEMENTED,
-        "Conv2D is only implemented for tensors, not weights, at my_conv2d");
+        "The input \"input\" for Conv2D must be a tensor, at my_conv2d");
   }
   {
     // Filter is tensor, should fail.
@@ -2811,7 +2874,7 @@ TEST_F(OpConverterTest, ConvertConv2D) {
     AddTestTensor("weights", {3, 3, 1, 1});
     RunValidationAndConversion(
         node_def, error::UNIMPLEMENTED,
-        "Kernel for Conv2D must be constant weights, at my_conv2d");
+        "The input \"filter\" for Conv2D must be a constant, at my_conv2d");
   }
   {
     // Filter is not 4D, should fail.
