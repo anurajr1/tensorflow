@@ -1784,9 +1784,10 @@ class Model(Network):
       batch_size = 32
     return batch_size
 
-  @property
-  def _default_save_signature(self):
-    return saving_utils.trace_model_call(self)
+  def _list_functions_for_serialization(self):
+    return {
+        '_default_save_signature': saving_utils.trace_model_call(self)
+    }
 
   def _set_sample_weight_attributes(self, sample_weight_mode,
                                     skip_target_weighing_indices):
@@ -2290,18 +2291,14 @@ class Model(Network):
         else:
           in_tuple = x
 
-        if shuffle:
-          # 1024 is a good buffer size since it is much larger than the average
-          # batch size provided by the user and provides sufficient randomness.
-          # One thing to keep in mind is the memory usage based on the size of
-          # each sample.
-          shuffle_buffer = 1024
-        else:
-          shuffle_buffer = None
         ds = strategy.extended.experimental_make_numpy_dataset(in_tuple,
                                                                session=session)
-        if shuffle_buffer:
-          ds = ds.shuffle(shuffle_buffer)
+        if shuffle:
+          # We want a buffer size that is larger than the batch size provided by
+          # the user and provides sufficient randomness. Note that larger
+          # numbers introduce more memory usage based on the size of each
+          # sample.
+          ds = ds.shuffle(max(1024, batch_size * 8))
         if repeat:
           ds = ds.repeat()
 
