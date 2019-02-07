@@ -1212,6 +1212,12 @@ class ResizeNearestNeighbor
   }
 
   int GetVersion(const OperatorSignature& op_signature) const override {
+    const string& input_name = op_signature.op->inputs[0];
+    const Array& input_array = op_signature.model->GetArray(input_name);
+    // Version 2 supports signed int8 input types.
+    if (input_array.data_type == ArrayDataType::kInt8) {
+      return 2;
+    }
     return 1;
   }
 };
@@ -1259,6 +1265,14 @@ class Split
   }
 
   int GetVersion(const OperatorSignature& op_signature) const override {
+    const string& input_name = op_signature.op->inputs[0];
+    const Array& input_array = op_signature.model->GetArray(input_name);
+    // If the op take int8 input, it is version 2, for int32 it's version 3.
+    if (input_array.data_type == ArrayDataType::kInt8) {
+      return 2;
+    } else if (input_array.data_type == ArrayDataType::kInt32) {
+      return 3;
+    }
     return 1;
   }
 };
@@ -1327,6 +1341,11 @@ class TopK_V2 : public BuiltinOperator<TopKV2Operator, ::tflite::TopKV2Options,
                    TocoOperator* op) const override {}
 
   int GetVersion(const OperatorSignature& op_signature) const override {
+    const string& input_name = op_signature.op->inputs[0];
+    const Array& input_array = op_signature.model->GetArray(input_name);
+    if (input_array.data_type == ArrayDataType::kInt8) {
+      return 2;
+    }
     return 1;
   }
 };
@@ -1348,6 +1367,12 @@ class ArgMax : public BuiltinOperator<ArgMaxOperator, ::tflite::ArgMaxOptions,
   }
 
   int GetVersion(const OperatorSignature& op_signature) const override {
+    const string& input_name = op_signature.op->inputs[0];
+    const Array& input_array = op_signature.model->GetArray(input_name);
+    if (input_array.data_type == ArrayDataType::kInt8) {
+      return 2;
+    }
+
     return 1;
   }
 };
@@ -1369,6 +1394,12 @@ class ArgMin : public BuiltinOperator<ArgMinOperator, ::tflite::ArgMinOptions,
   }
 
   int GetVersion(const OperatorSignature& op_signature) const override {
+    const string& input_name = op_signature.op->inputs[0];
+    const Array& input_array = op_signature.model->GetArray(input_name);
+    if (input_array.data_type == ArrayDataType::kInt8) {
+      return 2;
+    }
+
     return 1;
   }
 };
