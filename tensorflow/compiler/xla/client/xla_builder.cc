@@ -1014,6 +1014,18 @@ XlaOp XlaBuilder::DotGeneral(const XlaOp& lhs, const XlaOp& rhs,
     HloInstructionProto instr;
     TF_ASSIGN_OR_RETURN(const Shape& lhs_shape, GetShape(lhs));
     TF_ASSIGN_OR_RETURN(const Shape& rhs_shape, GetShape(rhs));
+    // If one operand is a scalar, just multiply the two operands.
+    if (ShapeUtil::IsScalar(lhs_shape) || ShapeUtil::IsScalar(rhs_shape)) {
+      if (dimension_numbers.rhs_batch_dimensions_size() != 0 ||
+          dimension_numbers.lhs_batch_dimensions_size() != 0 ||
+          dimension_numbers.rhs_contracting_dimensions_size() != 0 ||
+          dimension_numbers.lhs_contracting_dimensions_size() != 0) {
+        return InvalidArgument(
+            "Dots with scalar operands must have no contracting or batch "
+            "dimensions");
+      }
+      return xla::Mul(lhs, rhs);
+    }
     TF_ASSIGN_OR_RETURN(Shape shape,
                         ShapeInference::InferDotOpShape(lhs_shape, rhs_shape,
                                                         dimension_numbers));
@@ -2869,6 +2881,29 @@ XlaOp ConvGeneralDilated(const XlaOp& lhs, const XlaOp& rhs,
 XlaOp Fft(const XlaOp& operand, FftType fft_type,
           absl::Span<const int64> fft_length) {
   return operand.builder()->Fft(operand, fft_type, fft_length);
+}
+
+XlaOp TriangularSolve(XlaOp a, XlaOp b, bool left_side, bool lower,
+                      bool unit_diagonal,
+                      TriangularSolveOptions::Transpose transpose_a) {
+  XlaBuilder* builder = a.builder();
+  return builder->ReportErrorOrReturn([&]() -> StatusOr<XlaOp> {
+    HloInstructionProto instr;
+    TF_ASSIGN_OR_RETURN(const Shape& a_shape, builder->GetShape(a));
+    TF_ASSIGN_OR_RETURN(const Shape& b_shape, builder->GetShape(b));
+    xla::TriangularSolveOptions& options =
+        *instr.mutable_triangular_solve_options();
+    options.set_left_side(left_side);
+    options.set_lower(lower);
+    options.set_unit_diagonal(unit_diagonal);
+    options.set_transpose_a(transpose_a);
+    TF_ASSIGN_OR_RETURN(Shape shape, ShapeInference::InferTriangularSolveShape(
+                                         a_shape, b_shape, options));
+    *instr.mutable_shape() = shape.ToProto();
+
+    return builder->AddInstruction(std::move(instr),
+                                   HloOpcode::kTriangularSolve, {a, b});
+  });
 }
 
 XlaOp Infeed(XlaBuilder* builder, const Shape& shape, const string& config) {
