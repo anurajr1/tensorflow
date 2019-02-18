@@ -41,7 +41,6 @@ from tensorflow.python.keras.engine import training_eager
 from tensorflow.python.keras.engine import training_generator
 from tensorflow.python.keras.engine import training_utils
 from tensorflow.python.keras.engine.network import Network
-from tensorflow.python.keras.optimizer_v2 import optimizer_v2
 from tensorflow.python.keras.saving import saving_utils
 from tensorflow.python.keras.utils import data_utils
 from tensorflow.python.keras.utils import losses_utils
@@ -49,8 +48,7 @@ from tensorflow.python.keras.utils.generic_utils import slice_arrays
 from tensorflow.python.keras.utils.mode_keys import ModeKeys
 from tensorflow.python.ops import math_ops
 from tensorflow.python.platform import tf_logging as logging
-from tensorflow.python.training import optimizer as tf_optimizer_module
-from tensorflow.python.training.checkpointable import base as checkpointable
+from tensorflow.python.training.tracking import base as trackable
 from tensorflow.python.util import nest
 from tensorflow.python.util.tf_export import keras_export
 
@@ -143,7 +141,7 @@ class Model(Network):
         return super(Model, self).get_weights()
     return super(Model, self).get_weights()
 
-  @checkpointable.no_automatic_dependency_tracking
+  @trackable.no_automatic_dependency_tracking
   def compile(self,
               optimizer,
               loss=None,
@@ -233,12 +231,6 @@ class Model(Network):
     # Validate that arguments passed by the user to `compile` are supported by
     # DistributionStrategy.
     if self._distribution_strategy:
-      if not isinstance(optimizer,
-                        (tf_optimizer_module.Optimizer, optimizers.TFOptimizer,
-                         optimizer_v2.OptimizerV2)):
-        raise NotImplementedError(
-            'optimizer must be an instance of '
-            'tf.train.Optimizer, not a %s' % type(optimizer))
       if sample_weight_mode:
         raise NotImplementedError('sample_weight_mode is not supported with '
                                   'DistributionStrategy.')
@@ -250,19 +242,12 @@ class Model(Network):
                          'DistributionStrategy.')
 
     loss = loss or {}
-    if self.run_eagerly and not isinstance(
-        optimizer, (tf_optimizer_module.Optimizer, optimizers.TFOptimizer,
-                    optimizer_v2.OptimizerV2)):
-      raise ValueError(
-          'When running a model in eager execution, the optimizer must be an '
-          'instance of tf.train.Optimizer. Received: '
-          '%s' % optimizer)
 
     self.optimizer = optimizer
     # We've disabled automatic dependency tracking for this method, but do want
-    # to add a checkpoint dependency on the optimizer if it's checkpointable.
-    if isinstance(self.optimizer, checkpointable.Checkpointable):
-      self._track_checkpointable(
+    # to add a checkpoint dependency on the optimizer if it's trackable.
+    if isinstance(self.optimizer, trackable.Trackable):
+      self._track_trackable(
           self.optimizer, name='optimizer', overwrite=True)
     self.loss = loss
     self._compile_metrics = metrics or []
@@ -689,6 +674,8 @@ class Model(Network):
         # servers via the Distribute Coordinator.
         def _worker_fn(_):
           """Run training inside the distributed coordinator."""
+          filtered_callbacks = distributed_training_utils.filter_callbacks(
+              callbacks)
           return training_distributed.fit_distributed(
               self,
               x=x,
@@ -696,7 +683,7 @@ class Model(Network):
               batch_size=batch_size,
               epochs=epochs,
               verbose=verbose,
-              callbacks=callbacks,
+              callbacks=filtered_callbacks,
               validation_split=validation_split,
               validation_data=validation_data,
               shuffle=shuffle,
@@ -949,6 +936,8 @@ class Model(Network):
         # servers via the Distribute Coordinator.
         def _worker_fn(_):
           """Run evaluation inside the distributed coordinator."""
+          filtered_callbacks = distributed_training_utils.filter_callbacks(
+              callbacks)
           return training_distributed.evaluate_distributed(
               self,
               x=x,
@@ -957,7 +946,7 @@ class Model(Network):
               verbose=verbose,
               sample_weight=sample_weight,
               steps=steps,
-              callbacks=callbacks)
+              callbacks=filtered_callbacks)
 
         # Independent worker only for now.
         return dc.run_distribute_coordinator(
@@ -2674,7 +2663,7 @@ class Model(Network):
           'However we received `validation_data=%s`' % validation_data)
     return val_x, val_y, val_sample_weight
 
-  @checkpointable.no_automatic_dependency_tracking
+  @trackable.no_automatic_dependency_tracking
   def _set_inputs(self, inputs, outputs=None, training=None):
     """Set model's input and output specs based on the input data received.
 
