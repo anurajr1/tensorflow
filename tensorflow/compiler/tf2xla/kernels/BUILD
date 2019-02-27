@@ -115,6 +115,7 @@ tf_kernel_library(
     ],
     tags = ["optonly"],
     deps = [
+        ":case_op",
         ":conv_op_helpers",
         ":if_op",
         ":while_op",
@@ -136,7 +137,6 @@ tf_kernel_library(
         "//tensorflow/compiler/xla/client:xla_builder",
         "//tensorflow/compiler/xla/client:xla_computation",
         "//tensorflow/compiler/xla/client/lib:arithmetic",
-        "//tensorflow/compiler/xla/client/lib:cholesky",
         "//tensorflow/compiler/xla/client/lib:constants",
         "//tensorflow/compiler/xla/client/lib:loops",
         "//tensorflow/compiler/xla/client/lib:math",
@@ -169,7 +169,6 @@ tf_kernel_library(
         "//tensorflow/core:state_ops_op_lib",
         "//tensorflow/core:stateless_random_ops_op_lib",
         "//tensorflow/core:training_ops_op_lib",
-        "//tensorflow/core/kernels:concat_lib",
         "//tensorflow/core/kernels:constant_op",
         "//tensorflow/core/kernels:control_flow_ops",
         "//tensorflow/core/kernels:conv_ops",
@@ -271,6 +270,23 @@ tf_kernel_library(
     ],
 )
 
+tf_kernel_library(
+    name = "case_op",
+    srcs = ["case_op.cc"],
+    hdrs = ["case_op.h"],
+    deps = [
+        "//tensorflow/compiler/tf2xla:common",
+        "//tensorflow/compiler/tf2xla:side_effect_util",
+        "//tensorflow/compiler/tf2xla:xla_compiler",
+        "//tensorflow/compiler/tf2xla/ops:xla_ops",
+        "//tensorflow/compiler/xla:literal",
+        "//tensorflow/compiler/xla/client:xla_builder",
+        "//tensorflow/core:framework",
+        "//tensorflow/core:lib",
+        "//tensorflow/core:protos_all_cc",
+    ],
+)
+
 # Kernels that have a dummy (no-op) implementation.
 tf_kernel_library(
     name = "xla_dummy_ops",
@@ -306,7 +322,6 @@ tf_kernel_library(
         "//tensorflow/core:framework",
         "//tensorflow/core:framework_bounds_check",
         "//tensorflow/core:lib",
-        "//tensorflow/core/kernels:argmax_op",
     ],
 )
 
