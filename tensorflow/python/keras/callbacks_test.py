@@ -1048,6 +1048,31 @@ class TestTensorBoardV2(keras_parameterized.TestCase):
     model.compile('sgd', 'mse', run_eagerly=testing_utils.should_run_eagerly())
     return model
 
+  def test_TensorBoard_default_logdir(self):
+    """Regression test for cross-platform pathsep in default logdir."""
+    os.chdir(self.get_temp_dir())
+
+    model = self._get_model()
+    x, y = np.ones((10, 10, 10, 1)), np.ones((10, 1))
+    tb_cbk = keras.callbacks.TensorBoard()  # no logdir specified
+
+    model.fit(
+        x,
+        y,
+        batch_size=2,
+        epochs=2,
+        validation_data=(x, y),
+        callbacks=[tb_cbk])
+
+    summary_file = list_summaries(logdir='.')
+    train_dir = os.path.join('.', 'logs', 'train')
+    validation_dir = os.path.join('.', 'logs', 'validation')
+    self.assertEqual(
+        summary_file.scalars, {
+            _ObservedSummary(logdir=train_dir, tag='epoch_loss'),
+            _ObservedSummary(logdir=validation_dir, tag='epoch_loss'),
+        })
+
   def test_TensorBoard_basic(self):
     model = self._get_model()
     x, y = np.ones((10, 10, 10, 1)), np.ones((10, 1))
@@ -1060,6 +1085,31 @@ class TestTensorBoardV2(keras_parameterized.TestCase):
         epochs=2,
         validation_data=(x, y),
         callbacks=[tb_cbk])
+
+    summary_file = list_summaries(self.logdir)
+    self.assertEqual(
+        summary_file.scalars, {
+            _ObservedSummary(logdir=self.train_dir, tag='epoch_loss'),
+            _ObservedSummary(logdir=self.validation_dir, tag='epoch_loss'),
+        })
+
+  def test_TensorBoard_across_invocations(self):
+    """Regression test for summary writer resource use-after-free.
+
+    See: <https://github.com/tensorflow/tensorflow/issues/25707>
+    """
+    model = self._get_model()
+    x, y = np.ones((10, 10, 10, 1)), np.ones((10, 1))
+    tb_cbk = keras.callbacks.TensorBoard(self.logdir)
+
+    for _ in (1, 2):
+      model.fit(
+          x,
+          y,
+          batch_size=2,
+          epochs=2,
+          validation_data=(x, y),
+          callbacks=[tb_cbk])
 
     summary_file = list_summaries(self.logdir)
     self.assertEqual(
@@ -1183,6 +1233,61 @@ class TestTensorBoardV2(keras_parameterized.TestCase):
   def test_TensorBoard_invalid_argument(self):
     with self.assertRaisesRegexp(ValueError, 'Unrecognized arguments'):
       keras.callbacks.TensorBoard(wwrite_images=True)
+
+
+# Note that this test specifies model_type explicitly.
+class TestTensorBoardV2WriteModelTest(test.TestCase):
+
+  def setUp(self):
+    super(TestTensorBoardV2WriteModelTest, self).setUp()
+    self.logdir = os.path.join(self.get_temp_dir(), 'tb')
+    self.train_dir = os.path.join(self.logdir, 'train')
+    self.validation_dir = os.path.join(self.logdir, 'validation')
+
+  def fitModelAndAssertKerasModelWritten(self, model):
+    x, y = np.ones((10, 10, 10, 1)), np.ones((10, 1))
+    tb_cbk = keras.callbacks.TensorBoard(self.logdir, write_graph=True)
+    model.fit(
+        x,
+        y,
+        batch_size=2,
+        epochs=2,
+        validation_data=(x, y),
+        callbacks=[tb_cbk])
+    summary_file = list_summaries(self.logdir)
+    self.assertEqual(
+        summary_file.tensors,
+        {
+            _ObservedSummary(logdir=self.train_dir, tag='keras'),
+        },
+    )
+
+  def test_TensorBoard_writeSequentialModel_noInputShape(self):
+    model = keras.models.Sequential([
+        keras.layers.Conv2D(8, (3, 3)),
+        keras.layers.Flatten(),
+        keras.layers.Dense(1),
+    ])
+    model.compile('sgd', 'mse', run_eagerly=False)
+    self.fitModelAndAssertKerasModelWritten(model)
+
+  def test_TensorBoard_writeSequentialModel_withInputShape(self):
+    model = keras.models.Sequential([
+        keras.layers.Conv2D(8, (3, 3), input_shape=(10, 10, 1)),
+        keras.layers.Flatten(),
+        keras.layers.Dense(1),
+    ])
+    model.compile('sgd', 'mse', run_eagerly=False)
+    self.fitModelAndAssertKerasModelWritten(model)
+
+  def test_TensoriBoard_writeModel(self):
+    inputs = keras.layers.Input([10, 10, 1])
+    x = keras.layers.Conv2D(8, (3, 3), activation='relu')(inputs)
+    x = keras.layers.Flatten()(x)
+    x = keras.layers.Dense(1)(x)
+    model = keras.models.Model(inputs=inputs, outputs=[x])
+    model.compile('sgd', 'mse', run_eagerly=False)
+    self.fitModelAndAssertKerasModelWritten(model)
 
 
 if __name__ == '__main__':
