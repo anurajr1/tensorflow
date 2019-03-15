@@ -55,10 +55,8 @@ class IrArray {
   // multidimensional index, which LLVM DCE can delete.
   class Index {
    public:
-    // Constructs an index of rank "size". Each dimension of the index is
-    // initialized to nullptr.
-    explicit Index(llvm::Type* index_ty, size_t size = 0)
-        : multidim_(size, nullptr), index_type_(index_ty) {
+    // Constructs an index for a scalar shape.
+    explicit Index(llvm::Type* index_ty) : index_type_(index_ty) {
       CHECK(index_ty->isIntegerTy());
     }
 
@@ -70,7 +68,10 @@ class IrArray {
       if (size() == 0) {
         index_type_ = index_ty;
       } else {
-        index_type_ = (*this)[0]->getType();
+        for (const auto* dim : multidim) {
+          CHECK_NE(dim, nullptr);
+        }
+        index_type_ = multidim[0]->getType();
         if (index_ty != nullptr) {
           CHECK_EQ(index_type_, index_ty);
         }
@@ -100,9 +101,9 @@ class IrArray {
     // Returns an index that adds `addend` to the given `dim` of the object.
     Index AddOffsetToDim(llvm::Value* addend, int64 dim,
                          llvm::IRBuilder<>* b) const {
-      IrArray::Index index = *this;
-      index[dim] = b->CreateAdd(index[dim], addend);
-      return index;
+      std::vector<llvm::Value*> multi_index = multidim();
+      multi_index[dim] = b->CreateAdd(multi_index[dim], addend);
+      return Index(multi_index, index_type_);
     }
 
     const std::vector<llvm::Value*>& multidim() const { return multidim_; }
@@ -111,13 +112,8 @@ class IrArray {
     size_t size() const { return multidim().size(); }
 
     llvm::Value* operator[](size_t i) const { return multidim()[i]; }
-    llvm::Value*& operator[](size_t i) { return mutable_multidim()[i]; }
 
-    using iterator = std::vector<llvm::Value*>::iterator;
     using const_iterator = std::vector<llvm::Value*>::const_iterator;
-
-    iterator begin() { return mutable_multidim().begin(); }
-    iterator end() { return mutable_multidim().end(); }
 
     const_iterator begin() const { return multidim().begin(); }
     const_iterator end() const { return multidim().end(); }
@@ -182,12 +178,6 @@ class IrArray {
     // Precondition: "shape" has a layout.
     Index(absl::Span<llvm::Value* const> multidim, llvm::Value* linear,
           const Shape& shape, llvm::Type* index_type);
-
-    // Changing the multi-dimensional index invalidates the linear index.
-    std::vector<llvm::Value*>& mutable_multidim() {
-      linear_ = nullptr;
-      return multidim_;
-    }
 
     void Delinearize(std::vector<llvm::Value*>* multidim, llvm::Value* linear,
                      const Shape& shape, llvm::IRBuilder<>* b) const;
