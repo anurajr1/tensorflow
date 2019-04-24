@@ -42,7 +42,7 @@ from tensorflow.python.keras import callbacks as cbks
 from tensorflow.python.keras import losses
 from tensorflow.python.keras import metrics as metrics_module
 from tensorflow.python.keras.utils import generic_utils
-from tensorflow.python.keras.utils.losses_utils import squeeze_or_expand_dimensions
+from tensorflow.python.keras.utils import losses_utils
 from tensorflow.python.ops import array_ops
 from tensorflow.python.ops import math_ops
 from tensorflow.python.platform import tf_logging as logging
@@ -866,7 +866,8 @@ def call_metric_function(metric_fn,
       weights = mask
     else:
       # Update dimensions of weights to match with mask.
-      mask, _, weights = squeeze_or_expand_dimensions(mask, None, weights)
+      mask, _, weights = losses_utils.squeeze_or_expand_dimensions(
+          mask, None, weights)
       weights *= mask
 
   if y_pred is not None:
@@ -876,7 +877,7 @@ def call_metric_function(metric_fn,
 
 
 def get_loss_function(loss):
-  """Returns the loss function corresponding to the given loss input."""
+  """Returns the loss corresponding to the loss input in `compile` API."""
   if loss is None or isinstance(loss, losses.Loss):
     return loss
 
@@ -891,7 +892,14 @@ def get_loss_function(loss):
   # Wrap loss function with signature `(y_true, y_pred, **kwargs)`
   # in `LossFunctionWrapper` class.
   loss_fn = losses.get(loss)
-  return losses.LossFunctionWrapper(loss_fn, name=loss_fn.__name__)
+
+  # For losses which are given as strings/functions in the compile API,
+  # we always set the loss reduction type to be `SUM_OVER_BATCH_SIZE`
+  # (both in distribution strategy context and otherwise).
+  return losses.LossFunctionWrapper(
+      loss_fn,
+      name=loss_fn.__name__,
+      reduction=losses_utils.ReductionV2.SUM_OVER_BATCH_SIZE)
 
 
 def validate_dataset_input(x, y, sample_weight, validation_split=None):
@@ -973,7 +981,7 @@ def check_steps_argument(input_data, steps, steps_name):
   """
   # TODO(fchollet): allow datasets with steps=None if cardinality is known.
   is_x_iterator = isinstance(
-      input_data, (iterator_ops.Iterator, iterator_ops.EagerIterator))
+      input_data, (iterator_ops.Iterator, iterator_ops.IteratorV2))
   if (input_data is None or is_x_iterator or has_symbolic_tensors(input_data) or
       (isinstance(input_data, list) and not input_data)):
     if steps is None:
@@ -986,7 +994,8 @@ def check_steps_argument(input_data, steps, steps_name):
 
 
 def cast_single_tensor(x):
-  if tensor_util.is_tensor(x) and x.dtype.is_floating:
+  x = ops.convert_to_tensor(x)
+  if x.dtype.is_floating:
     return math_ops.cast(x, dtype=K.floatx())
   return x
 
@@ -1000,14 +1009,7 @@ def cast_if_floating_dtype(x):
 
   Returns:
     Converted input.
-
-  Raises:
-    RuntimeError: if data isn't tensors.
   """
-  if not has_tensors(x):
-    raise RuntimeError(
-        'Please provide tensors for casting, got: {x}'.format(x=x))
-
   return nest.map_structure(cast_single_tensor, x)
 
 
@@ -1179,8 +1181,8 @@ def is_feature_layer(layer):
 
 def is_eager_dataset_or_iterator(data):
   return context.executing_eagerly() and isinstance(
-      data, (dataset_ops.DatasetV1, dataset_ops.DatasetV2,
-             iterator_ops.EagerIterator))
+      data,
+      (dataset_ops.DatasetV1, dataset_ops.DatasetV2, iterator_ops.IteratorV2))
 
 
 # pylint: disable=protected-access
@@ -1317,7 +1319,7 @@ def verify_dataset_shuffled(x):
 
 def is_dataset_or_iterator(data):
   return isinstance(data, (dataset_ops.DatasetV1, dataset_ops.DatasetV2,
-                           iterator_ops.EagerIterator, iterator_ops.Iterator))
+                           iterator_ops.Iterator, iterator_ops.IteratorV2))
 
 
 def get_iterator(dataset):

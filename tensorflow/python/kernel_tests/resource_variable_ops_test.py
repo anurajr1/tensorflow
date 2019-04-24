@@ -81,9 +81,8 @@ class ResourceVariableOpsTest(test_util.TensorFlowTestCase,
                                                    0,
                                                    dtype=dtypes.int32)).run()
 
+  @test_util.run_gpu_only
   def testGPUInt64(self):
-    if not context.context().num_gpus():
-      return
     with context.eager_mode(), context.device("gpu:0"):
       v = resource_variable_ops.ResourceVariable(1, dtype=dtypes.int64)
       self.assertAllEqual(1, v.numpy())
@@ -1145,7 +1144,8 @@ class ResourceVariableOpsTest(test_util.TensorFlowTestCase,
           expected=[[[[8, 9], [9, 8]], [[8, 8], [9, 9]]],
                     [[[9, 9], [8, 8]], [[8, 9], [9, 8]]]]),
 
-      # batch_dims=indices.shape.ndims - 1 (equivalent to tf.batch_gather)
+      # batch_dims=indices.shape.ndims - 1 (equivalent to
+      # tf.compat.v1.batch_gather)
       dict(  # 2D indices (1 batch dim)
           batch_dims=1,
           params=[[10, 11, 12, 13], [20, 21, 22, 23]],
