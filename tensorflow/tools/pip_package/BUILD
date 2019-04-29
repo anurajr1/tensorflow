@@ -60,6 +60,8 @@ COMMON_PIP_DEPS = [
     "setup.py",
     ":included_headers",
     "//tensorflow:tensorflow_py",
+    "//tensorflow/examples/saved_model/integration_tests:mnist_util",
+    "//tensorflow/examples/saved_model/integration_tests:util",
     "//tensorflow/lite/python/testdata:interpreter_test_data",
     "//tensorflow/lite/python:tflite_convert",
     "//tensorflow/lite/toco/python:toco_from_protos",
@@ -94,6 +96,12 @@ COMMON_PIP_DEPS = [
     "//tensorflow/python/tools/api/generator:create_python_api",
     "//tensorflow/python:test_ops",
     "//tensorflow/python:while_v2",
+    "//tensorflow/tools/common:public_api",
+    "//tensorflow/tools/common:test_module1",
+    "//tensorflow/tools/docs:doc_generator_visitor",
+    "//tensorflow/tools/docs:generate_lib",
+    "//tensorflow/tools/docs:parser",
+    "//tensorflow/tools/docs:py_guide_parser",
 ]
 
 COMMON_PIP_DEPS_V1 = COMMON_PIP_DEPS + [
@@ -244,7 +252,7 @@ filegroup(
         "@nlohmann_json_lib//:LICENSE.MIT",
         "@tbb//:LICENSE",
     ]) + if_rocm([
-        "@rocprim_archive//:LICENSE.TXT",
+        "@rocprim_archive//:LICENSE.txt",
     ]) + tf_additional_license_deps(),
 )
 

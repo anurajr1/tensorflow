@@ -1,4 +1,4 @@
-/* Copyright 2015 The TensorFlow Authors. All Rights Reserved.
+/* Copyright 2019 The TensorFlow Authors. All Rights Reserved.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -13,18 +13,21 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#ifndef TENSORFLOW_STREAM_EXECUTOR_LIB_STRINGPRINTF_H_
-#define TENSORFLOW_STREAM_EXECUTOR_LIB_STRINGPRINTF_H_
+#include "tensorflow/lite/kernels/cpu_backend_context.h"
 
-#include "tensorflow/core/lib/strings/stringprintf.h"
+#include "public/gemmlowp.h"
+#include "tensorflow/lite/experimental/ruy/context.h"
 
-namespace stream_executor {
-namespace port {
+namespace tflite {
 
-using tensorflow::strings::Printf;
-using tensorflow::strings::Appendf;
+CpuBackendContext::CpuBackendContext()
+    : ruy_context_(new ruy::Context),
+      gemmlowp_context_(new gemmlowp::GemmContext) {}
 
-}  // namespace port
-}  // namespace stream_executor
+CpuBackendContext::~CpuBackendContext() {}
 
-#endif  // TENSORFLOW_STREAM_EXECUTOR_LIB_STRINGPRINTF_H_
+void CpuBackendContext::set_max_num_threads(int max_num_threads) {
+  gemmlowp_context_->set_max_num_threads(max_num_threads);
+}
+
+}  // namespace tflite
