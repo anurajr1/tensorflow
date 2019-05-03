@@ -713,17 +713,16 @@ class NNAPIDelegateKernel {
         break;
       case kTfLiteBuiltinResizeBilinear:
         if (version == 1) {
-          // TODO(131255866): relax the constraint after tests on the drivers.
-          if (android_sdk_version < kMinSdkVersionForNNAPI12) {
-            // Some NNAPI 1.1 drivers don't support this operator properly.
-            return nullptr;
-          }
           const auto& input = context->tensors[node->inputs->data[0]];
           if (input.dims->size != 4) return nullptr;
           if (input.type != kTfLiteFloat32 && input.type != kTfLiteUInt8) {
             return nullptr;
           }
-
+          if (android_sdk_version < kMinSdkVersionForNNAPI12 &&
+              input.type != kTfLiteFloat32) {
+            // NNAPI 1.0 & 11 only supports float input.
+            return nullptr;
+          }
           return [](const NNAPIOpMappingArgs& mapping_args)
                      -> ANeuralNetworksOperationType {
             const int output_id = mapping_args.node->outputs->data[0];
@@ -893,11 +892,14 @@ class NNAPIDelegateKernel {
         if (version == 1 && node->inputs->size == 2 &&
             (android_sdk_version >= kMinSdkVersionForNNAPI11) &&
             (context->tensors[node->inputs->data[0]].type == kTfLiteFloat32 ||
+             (context->tensors[node->inputs->data[0]].type == kTfLiteUInt8 &&
+              context->tensors[node->inputs->data[0]].params.zero_point == 0) ||
              android_sdk_version >= kMinSdkVersionForNNAPI12)) {
           // NNAPI does not support specifying the padding value.
           // Before 1.2, NNAPI pads physical zero for quantized tensors, so only
-          // delegate float pad to NNAPI. NNAPI 1.2 onwards pads with
-          // zero-point, so delegate quantized pad as well.
+          // delegate pad with float input or quantized input with zero_point ==
+          // 0 to NNAPI. NNAPI 1.2 onwards pads with zero-point, so delegate
+          // other quantized pad as well.
           return BasicMappingFn<ANEURALNETWORKS_PAD>;
         }
         break;
@@ -1465,107 +1467,113 @@ class NNAPIDelegateKernel {
 
 }  // namespace
 
-// Return a NN API Delegate struct that can check for support of ops.
-TfLiteDelegate* NnApiDelegate() {
-  static TfLiteDelegate delegate = {
-      .data_ = nullptr,
-      .Prepare = [](TfLiteContext* context,
-                    TfLiteDelegate* delegate) -> TfLiteStatus {
-        // Do not check nodes_ if NN API is unavailable.
-        const NnApi* nnapi = NnApiImplementation();
-        if (nnapi->android_sdk_version < kMinSdkVersionForNNAPI ||
-            !nnapi->nnapi_exists) {
-          return kTfLiteOk;
-        }
-        // For NNAPI 1.2+, check if there is any accelerator available.
-        // If not, don't delegate to NNAPI's CPU reference implementation.
-        if (nnapi->android_sdk_version >= kMinSdkVersionForNNAPI12) {
-          uint32_t device_count = 0;
-          RETURN_TFLITE_ERROR_IF_NN_ERROR(
-              context, nnapi->ANeuralNetworks_getDeviceCount(&device_count));
-          // Any available accelerator will make the device_count larger than 1.
-          // More sophisticated check and whitelisting can be added later.
-          if (device_count <= 1) {
-            return kTfLiteOk;
-          }
-        }
-        // Allocate one element in vector already since TensorFlow Lite uses
-        // the first value as the number of nodes. The actual value will be set
-        // later, after the vector has been filled.
-        std::vector<int> supported_nodes(1);
-        // We don't care about all nodes_, we only care about ones in the
-        // current plan.
-        TfLiteIntArray* plan;
-        TF_LITE_ENSURE_STATUS(context->GetExecutionPlan(context, &plan));
+StatefulNnApiDelegate::StatefulNnApiDelegate(Options options)
+    : TfLiteDelegate(TfLiteDelegateCreate()),
+      delegate_data_(Data{.options = options}) {
+  Prepare = DoPrepare;
+  data_ = &delegate_data_;
+}
 
-        int android_sdk_version = NnApiImplementation()->android_sdk_version;
-        // Check for every node if it is supported
-        // TODO(b/80625235): Fix this to do more careful checking of versioning.
-        for (int node_index : TfLiteIntArrayView(plan)) {
-          TfLiteNode* node;
-          TfLiteRegistration* registration;
-          TF_LITE_ENSURE_STATUS(context->GetNodeAndRegistration(
-              context, node_index, &node, &registration));
-          if (NNAPIDelegateKernel::Map(context, registration->builtin_code,
-                                       registration->version,
-                                       android_sdk_version, node)) {
-            supported_nodes.push_back(node_index);
-          }
-        }
-        // First element in vector must be the number of actual nodes.
-        supported_nodes[0] = supported_nodes.size() - 1;
+StatefulNnApiDelegate::StatefulNnApiDelegate()
+    : StatefulNnApiDelegate(Options()) {}
 
-        // NN API Delegate Registration (the pseudo kernel that will invoke NN
-        // API node sub sets)
-        static const TfLiteRegistration nnapi_delegate_kernel = {
-            .init = [](TfLiteContext* context, const char* buffer,
-                       size_t length) -> void* {
-              const TfLiteDelegateParams* params =
-                  reinterpret_cast<const TfLiteDelegateParams*>(buffer);
-              NNAPIDelegateKernel* kernel_state = new NNAPIDelegateKernel;
-              kernel_state->Init(context, params);
-              return kernel_state;
-            },
+const StatefulNnApiDelegate::Options& StatefulNnApiDelegate::GetOptions(
+    TfLiteDelegate* delegate) {
+  auto delegate_data = reinterpret_cast<Data*>(delegate->data_);
+  return delegate_data->options;
+}
 
-            .free = [](TfLiteContext* context, void* buffer) -> void {
-              delete reinterpret_cast<NNAPIDelegateKernel*>(buffer);
-            },
+TfLiteStatus StatefulNnApiDelegate::DoPrepare(TfLiteContext* context,
+                                              TfLiteDelegate* delegate) {
+  // Do not check nodes_ if NN API is unavailable.
+  const NnApi* nnapi = NnApiImplementation();
+  if (nnapi->android_sdk_version < kMinSdkVersionForNNAPI ||
+      !nnapi->nnapi_exists) {
+    return kTfLiteOk;
+  }
+  // For NNAPI 1.2+, check if there is any accelerator available.
+  // If not, don't delegate to NNAPI's CPU reference implementation.
+  if (nnapi->android_sdk_version >= kMinSdkVersionForNNAPI12) {
+    uint32_t device_count = 0;
+    RETURN_TFLITE_ERROR_IF_NN_ERROR(
+        context, nnapi->ANeuralNetworks_getDeviceCount(&device_count));
+    // Any available accelerator will make the device_count larger than 1.
+    // More sophisticated check and whitelisting can be added later.
+    if (device_count <= 1) {
+      return kTfLiteOk;
+    }
+  }
+  // Allocate one element in vector already since TensorFlow Lite uses
+  // the first value as the number of nodes. The actual value will be set
+  // later, after the vector has been filled.
+  std::vector<int> supported_nodes(1);
+  // We don't care about all nodes_, we only care about ones in the
+  // current plan.
+  TfLiteIntArray* plan;
+  TF_LITE_ENSURE_STATUS(context->GetExecutionPlan(context, &plan));
 
-            .prepare = [](TfLiteContext* context,
-                          TfLiteNode* node) -> TfLiteStatus {
-              // Since the underlying resize happened ahead of delegation
-              // worked. This does nothing.
-              return kTfLiteOk;
-            },
+  int android_sdk_version = NnApiImplementation()->android_sdk_version;
+  // Check for every node if it is supported
+  // TODO(b/80625235): Fix this to do more careful checking of versioning.
+  for (int node_index : TfLiteIntArrayView(plan)) {
+    TfLiteNode* node;
+    TfLiteRegistration* registration;
+    TF_LITE_ENSURE_STATUS(context->GetNodeAndRegistration(
+        context, node_index, &node, &registration));
+    if (NNAPIDelegateKernel::Map(context, registration->builtin_code,
+                                 registration->version, android_sdk_version,
+                                 node)) {
+      supported_nodes.push_back(node_index);
+    }
+  }
+  // First element in vector must be the number of actual nodes.
+  supported_nodes[0] = supported_nodes.size() - 1;
 
-            .invoke = [](TfLiteContext* context,
-                         TfLiteNode* node) -> TfLiteStatus {
-              NNAPIDelegateKernel* state =
-                  reinterpret_cast<NNAPIDelegateKernel*>(node->user_data);
-              return state->Invoke(context, node);
-            },
-
-            .profiling_string = nullptr,
-            .builtin_code = kTfLiteBuiltinDelegate,
-            .custom_name = "TfLiteNnapiDelegate",
-            .version = 1,
-        };
-
-        // Request TFLite to partition the graph and make kernels
-        // for each independent node sub set a new nnapi_delegate_kernel.
-        return context->ReplaceNodeSubsetsWithDelegateKernels(
-            context, nnapi_delegate_kernel,
-            reinterpret_cast<TfLiteIntArray*>(supported_nodes.data()),
-            delegate);
+  // NN API Delegate Registration (the pseudo kernel that will invoke NN
+  // API node sub sets)
+  static const TfLiteRegistration nnapi_delegate_kernel = {
+      .init = [](TfLiteContext* context, const char* buffer,
+                 size_t length) -> void* {
+        const TfLiteDelegateParams* params =
+            reinterpret_cast<const TfLiteDelegateParams*>(buffer);
+        NNAPIDelegateKernel* kernel_state = new NNAPIDelegateKernel;
+        kernel_state->Init(context, params);
+        return kernel_state;
       },
 
-      .CopyFromBufferHandle = nullptr,
-      .CopyToBufferHandle = nullptr,
-      .FreeBufferHandle = nullptr,
-      .flags = kTfLiteDelegateFlagsNone,
+      .free = [](TfLiteContext* context, void* buffer) -> void {
+        delete reinterpret_cast<NNAPIDelegateKernel*>(buffer);
+      },
+
+      .prepare = [](TfLiteContext* context, TfLiteNode* node) -> TfLiteStatus {
+        // Since the underlying resize happened ahead of delegation
+        // worked. This does nothing.
+        return kTfLiteOk;
+      },
+
+      .invoke = [](TfLiteContext* context, TfLiteNode* node) -> TfLiteStatus {
+        NNAPIDelegateKernel* state =
+            reinterpret_cast<NNAPIDelegateKernel*>(node->user_data);
+        return state->Invoke(context, node);
+      },
+
+      .profiling_string = nullptr,
+      .builtin_code = kTfLiteBuiltinDelegate,
+      .custom_name = "TfLiteNnapiDelegate",
+      .version = 1,
   };
 
-  return &delegate;
+  // Request TFLite to partition the graph and make kernels
+  // for each independent node sub set a new nnapi_delegate_kernel.
+  return context->ReplaceNodeSubsetsWithDelegateKernels(
+      context, nnapi_delegate_kernel,
+      reinterpret_cast<TfLiteIntArray*>(supported_nodes.data()), delegate);
+}
+
+// Returns a singleton NNAPI Delegate that can check for support of ops.
+TfLiteDelegate* NnApiDelegate() {
+  static StatefulNnApiDelegate* delegate = new StatefulNnApiDelegate();
+  return delegate;
 }
 
 }  // namespace tflite
