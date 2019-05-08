@@ -911,6 +911,7 @@ tf_cuda_library(
         "framework/kernel_def_builder.h",
         "framework/kernel_def_util.h",
         "framework/log_memory.h",
+        "framework/logging.h",
         "framework/lookup_interface.h",
         "framework/memory_types.h",
         "framework/node_def_builder.h",
@@ -1883,7 +1884,6 @@ cc_library(
     srcs = if_emscripten([":mobile_srcs_no_runtime"]),
     copts = ["-DSUPPORT_SELECTIVE_REGISTRATION"] + tf_opts_nortti_if_emscripten(),
     defines = ["TENSORFLOW_LITE_PROTOS"],
-    linkopts = ["-lz"],
     tags = [
         "manual",
         "notap",
@@ -2203,6 +2203,13 @@ tf_pyclif_proto_library(
     name = "protobuf/saved_model_pyclif",
     proto_lib = ":protos_all_cc",
     proto_srcfile = "protobuf/saved_model.proto",
+    visibility = ["//visibility:public"],
+)
+
+tf_pyclif_proto_library(
+    name = "framework/variable_pyclif",
+    proto_lib = ":protos_all_cc",
+    proto_srcfile = "framework/variable.proto",
     visibility = ["//visibility:public"],
 )
 

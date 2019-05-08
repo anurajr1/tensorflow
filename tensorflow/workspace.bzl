@@ -137,11 +137,11 @@ def tf_workspace(path_prefix = "", tf_repo_name = ""):
     tf_http_archive(
         name = "com_google_absl",
         build_file = clean_dep("//third_party:com_google_absl.BUILD"),
-        sha256 = "00d5ad2c5702be911239df287504f9da6985e8bc563ec6a8436552da1ac2938c",
-        strip_prefix = "abseil-cpp-d902eb869bcfacc1bad14933ed9af4bed006d481",
+        sha256 = "01ba1185a0e6e048e4890f39e383515195bc335f0627cdddc0c325ee68be4434",
+        strip_prefix = "abseil-cpp-cd86d0d20ab167c33b23d3875db68d1d4bad3a3b",
         urls = [
-            "http://mirror.tensorflow.org/github.com/abseil/abseil-cpp/archive/d902eb869bcfacc1bad14933ed9af4bed006d481.tar.gz",
-            "https://github.com/abseil/abseil-cpp/archive/d902eb869bcfacc1bad14933ed9af4bed006d481.tar.gz",
+            "http://mirror.tensorflow.org/github.com/abseil/abseil-cpp/archive/cd86d0d20ab167c33b23d3875db68d1d4bad3a3b.tar.gz",
+            "https://github.com/abseil/abseil-cpp/archive/cd86d0d20ab167c33b23d3875db68d1d4bad3a3b.tar.gz",
         ],
     )
 
@@ -834,11 +834,11 @@ def tf_workspace(path_prefix = "", tf_repo_name = ""):
     tf_http_archive(
         name = "tflite_ovic_testdata",
         build_file = clean_dep("//third_party:tflite_ovic_testdata.BUILD"),
-        sha256 = "21288dccc517acee47fa9648d4d3da28bf0fef5381911ed7b4d2ee36366ffa20",
+        sha256 = "033c941b7829b05ca55a124a26a6a0581b1ececc154a2153cafcfdb54f80dca2",
         strip_prefix = "ovic",
         urls = [
-            "http://mirror.tensorflow.org/storage.googleapis.com/download.tensorflow.org/data/ovic_2018_10_23.zip",
-            "https://storage.googleapis.com/download.tensorflow.org/data/ovic_2018_10_23.zip",
+            "http://mirror.tensorflow.org/storage.googleapis.com/download.tensorflow.org/data/ovic_2019_04_30.zip",
+            "https://storage.googleapis.com/download.tensorflow.org/data/ovic_2019_04_30.zip",
         ],
     )
 

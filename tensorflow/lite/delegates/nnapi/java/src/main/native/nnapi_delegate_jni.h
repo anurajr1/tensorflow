@@ -13,21 +13,26 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#ifndef TENSORFLOW_CORE_KERNELS_LOGGING_OPS_H_
-#define TENSORFLOW_CORE_KERNELS_LOGGING_OPS_H_
+#ifndef TENSORFLOW_LITE_DELEGATES_NNAPI_JAVA_SRC_MAIN_NATIVE_NNAPI_DELEGATE_JNI_H_
+#define TENSORFLOW_LITE_DELEGATES_NNAPI_JAVA_SRC_MAIN_NATIVE_NNAPI_DELEGATE_JNI_H_
 
-#include "absl/strings/str_cat.h"
-#include "absl/strings/str_split.h"
+#include <jni.h>
 
-namespace tensorflow {
+#ifdef __cplusplus
+extern "C" {
+#endif  // __cplusplus
 
-namespace logging {
+/*
+ * Class:     org_tensorflow_lite_nnapi_NnApiDelegate
+ * Method:    createDelegate
+ * Signature: ()J
+ */
+JNIEXPORT jlong JNICALL
+Java_org_tensorflow_lite_nnapi_NnApiDelegate_createDelegate(JNIEnv* env,
+                                                            jclass clazz);
 
-// Register a listener method to call on any printed messages.
-// Returns true if it is successfully registered.
-bool RegisterListener(void (*listener)(const char*));
+#ifdef __cplusplus
+}  // extern "C"
+#endif  // __cplusplus
 
-}  // namespace logging
-}  // namespace tensorflow
-
-#endif  // TENSORFLOW_CORE_KERNELS_LOGGING_OPS_H_
+#endif  // TENSORFLOW_LITE_DELEGATES_NNAPI_JAVA_SRC_MAIN_NATIVE_NNAPI_DELEGATE_JNI_H_

@@ -1748,6 +1748,9 @@ cuda_py_test(
         "//tensorflow/python:while_v2",
     ],
     shard_count = 16,
+    tags = [
+        "notsan",  # TODO(b/132205147): Re-enable this.
+    ],
     xla_enable_strict_auto_jit = True,
 )
 
@@ -3231,6 +3234,7 @@ cuda_py_test(
         "//tensorflow/python:util",
         "//tensorflow/python:data_flow_ops",
     ],
+    tags = ["no_oss"],  # b/124474135
     xla_enable_strict_auto_jit = True,
 )
 
@@ -3480,7 +3484,7 @@ cuda_py_test(
         "no_windows_gpu",
         "nomsan",
     ],
-    # b/127344411: xla_enable_strict_auto_jit = True,
+    xla_enable_strict_auto_jit = True,
 )
 
 cuda_py_test(
@@ -3793,6 +3797,7 @@ cuda_py_test(
         "//tensorflow/python/data/ops:dataset_ops",
         "//tensorflow/python/eager:context",
     ],
+    xla_enable_strict_auto_jit = True,
 )
 
 tf_py_test(

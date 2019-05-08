@@ -31,6 +31,7 @@ load(
     "//tensorflow:tensorflow.bzl",
     "cc_header_only_library",
     "if_android",
+    "if_cuda_or_rocm",
     "if_not_windows",
     "tf_cc_binary",
     "tf_cc_shared_object",
@@ -747,6 +748,7 @@ cc_library(
         "//tensorflow:android": [],
         "//tensorflow:arm": [],
         "//tensorflow:ios": [],
+        "//tensorflow:linux_aarch64": [],
         "//tensorflow:linux_ppc64le": [],
         "//conditions:default": [
             "TENSORFLOW_USE_CUSTOM_CONTRACTION_KERNEL",
@@ -759,6 +761,7 @@ cc_library(
         "//tensorflow:android": [],
         "//tensorflow:arm": [],
         "//tensorflow:ios": [],
+        "//tensorflow:linux_aarch64": [],
         "//tensorflow:linux_ppc64le": [],
         "//conditions:default": ["@mkl_dnn//:mkldnn_single_threaded"],
     }),
@@ -4090,13 +4093,15 @@ tf_kernel_library(
 tf_kernel_library(
     name = "bias_op",
     prefix = "bias_op",
-    deps = NN_DEPS + [":redux_functor"] + if_cuda([
+    deps = NN_DEPS + [
+        ":redux_functor",
+    ] + if_cuda_or_rocm([
         ":reduction_ops",
+    ]) + if_cuda([
         "@cub_archive//:cub",
         "//tensorflow/core:stream_executor",
         "//tensorflow/stream_executor/cuda:cuda_stream",
-    ]) + if_rocm_is_configured([
-        ":reduction_ops",
+    ]) + if_rocm([
         "@rocprim_archive//:rocprim",
     ]),
 )
@@ -4130,11 +4135,11 @@ tf_kernel_library(
 tf_kernel_library(
     name = "softmax_op",
     prefix = "softmax_op",
-    deps = NN_DEPS + if_cuda([
+    deps = NN_DEPS + if_cuda_or_rocm([
         ":reduction_ops",
+    ]) + if_cuda([
         "@cub_archive//:cub",
-    ]) + if_rocm_is_configured([
-        ":reduction_ops",
+    ]) + if_rocm([
         "@rocprim_archive//:rocprim",
     ]),
 )
@@ -4799,11 +4804,11 @@ tf_kernel_library(
     deps = SPARSE_DEPS + [
         ":bounds_check",
         "//third_party/eigen3",
-    ] + if_cuda([
+    ] + if_cuda_or_rocm([
         ":reduction_ops",
+    ]) + if_cuda([
         "@cub_archive//:cub",
-    ]) + if_rocm_is_configured([
-        ":reduction_ops",
+    ]) + if_rocm([
         "@rocprim_archive//:rocprim",
     ]),
 )
@@ -5316,11 +5321,11 @@ tf_kernel_library(
         "//tensorflow/core:framework",
         "//tensorflow/core:lib",
         "//tensorflow/core:lib_internal",
-    ] + if_cuda([
+    ] + if_cuda_or_rocm([
         ":reduction_ops",
+    ]) + if_cuda([
         "@cub_archive//:cub",
-    ]) + if_rocm_is_configured([
-        ":reduction_ops",
+    ]) + if_rocm([
         "@rocprim_archive//:rocprim",
     ]),
 )
@@ -5864,7 +5869,6 @@ filegroup(
         "initializable_lookup_table.h",
         "inplace_ops.cc",
         "inplace_ops_functor.h",
-        "logging_ops.h",
         "lookup_table_init_op.h",
         "lookup_table_op.h",
         "lookup_util.h",
@@ -6145,6 +6149,7 @@ filegroup(
 )
 
 ANDROID_TEXTUAL_HDRS = [
+    "eigen_spatial_convolutions-inl.h",
     "gather_nd_op_cpu_impl.h",
     "gemm_functors.h",
     "mirror_pad_op_cpu_impl.h",
