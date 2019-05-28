@@ -78,7 +78,7 @@ class CompileTest(keras_parameterized.TestCase):
       self.assertIsInstance(model.loss_functions[i], losses.LossFunctionWrapper)
       if not isinstance(loss_list[i], losses.LossFunctionWrapper):
         self.assertEqual(model.loss_functions[i].fn, loss_list[i])
-    self.assertAllEqual(model.loss_weights_list, [1.] * len(loss_list))
+    self.assertAllEqual(model._loss_weights_list, [1.] * len(loss_list))
 
   @keras_parameterized.run_all_keras_modes
   @parameterized.named_parameters(('loss_string', 'mse'),
@@ -108,7 +108,7 @@ class CompileTest(keras_parameterized.TestCase):
         run_eagerly=testing_utils.should_run_eagerly())
     self.assertEqual(model.loss_functions[0].fn, losses.mean_squared_error)
     self.assertEqual(model.loss_functions[1].fn, losses.mean_absolute_error)
-    self.assertAllEqual(model.loss_weights_list, [1., 1.])
+    self.assertAllEqual(model._loss_weights_list, [1., 1.])
 
     # Test loss is a dict.
     loss = {'dense_1': 'mae', 'dense_2': 'mse'}
@@ -118,7 +118,7 @@ class CompileTest(keras_parameterized.TestCase):
         run_eagerly=testing_utils.should_run_eagerly())
     self.assertEqual(model.loss_functions[0].fn, losses.mean_absolute_error)
     self.assertEqual(model.loss_functions[1].fn, losses.mean_squared_error)
-    self.assertAllEqual(model.loss_weights_list, [1., 1.])
+    self.assertAllEqual(model._loss_weights_list, [1., 1.])
 
   @keras_parameterized.run_all_keras_modes
   def test_compile_with_multi_output_and_loss_weights_list(self):
@@ -129,14 +129,14 @@ class CompileTest(keras_parameterized.TestCase):
         loss='mse',
         loss_weights=loss_weights,
         run_eagerly=testing_utils.should_run_eagerly())
-    self.assertAllEqual(model.loss_weights_list, [1., 2.])
+    self.assertAllEqual(model._loss_weights_list, [1., 2.])
 
   def test_compile_with_multi_output_and_loss_weights_dict(self):
     with context.graph_mode():
       model = self._get_multi_output_model()
       loss_weights = {'dense_1': 1., 'dense_2': 2.}
       model.compile(optimizer='adam', loss='mse', loss_weights=loss_weights)
-      self.assertAllEqual(model.loss_weights_list, [1., 2.])
+      self.assertAllEqual(model._loss_weights_list, [1., 2.])
 
       input_np = np.random.random((10, 3))
       output_a_np = np.random.random((10, 1))
@@ -997,7 +997,7 @@ class TrainingTest(keras_parameterized.TestCase):
   def test_validation_freq(self, validation_freq, expected_runs):
     x, y = np.ones((10, 10)), np.ones((10, 1))
     model = testing_utils.get_small_mlp(2, 1, 10)
-    model.compile('sgd', 'mse')
+    model.compile('sgd', 'mse', run_eagerly=testing_utils.should_run_eagerly())
 
     class ValCounter(keras.callbacks.Callback):
 
@@ -1022,7 +1022,7 @@ class TrainingTest(keras_parameterized.TestCase):
   def test_validation_steps_without_data(self):
     x, y = np.ones((10, 10)), np.ones((10, 1))
     model = testing_utils.get_small_mlp(2, 1, 10)
-    model.compile('sgd', 'mse')
+    model.compile('sgd', 'mse', run_eagerly=testing_utils.should_run_eagerly())
 
     with self.assertRaisesRegexp(
         ValueError, '`validation_steps` should not be specified if '
@@ -1047,15 +1047,17 @@ class TrainingTest(keras_parameterized.TestCase):
     model.add_loss(2 * math_ops.reduce_mean(
         keras.losses.mean_absolute_error(targets, outputs)))
 
+    model.add_loss(keras.losses.MeanAbsoluteError()(targets, outputs))
+
     model.compile(
-        keras.optimizer_v2.gradient_descent.SGD(0.033333),
+        keras.optimizer_v2.gradient_descent.SGD(0.025),
         loss=keras.losses.MeanAbsoluteError(),
         run_eagerly=testing_utils.should_run_eagerly())
 
     x = np.array([[0.], [1.], [2.]])
     y = np.array([[0.5], [2.], [3.5]])
     history = model.fit([x, y], y, batch_size=3, epochs=5)
-    self.assertAllClose(history.history['loss'], [3., 2.7, 2.4, 2.1, 1.8], 1e-3)
+    self.assertAllClose(history.history['loss'], [4., 3.6, 3.2, 2.8, 2.4], 1e-3)
 
   @keras_parameterized.run_all_keras_modes
   def test_unconditional_add_loss_correctness(self):
@@ -1157,6 +1159,60 @@ class TrainingTest(keras_parameterized.TestCase):
       model.fit(x, y)
       model.test_on_batch(x, y)
       model(x)
+
+  @keras_parameterized.run_all_keras_modes(always_skip_v1=True)
+  def test_subclassed_model_with_training_arg(self):
+
+    class LayerWithTrainingArg(keras.layers.Layer):
+
+      def call(self, inputs, training=None):
+        self.training = training
+        return inputs
+
+    class ModelWithTrainingArg(keras.Model):
+
+      def __init__(self):
+        super(ModelWithTrainingArg, self).__init__()
+        self.l1 = LayerWithTrainingArg()
+
+      def call(self, inputs, training=None):
+        self.training = training
+        inputs = self.l1(inputs, training=training)
+        return inputs
+
+    x = np.zeros((1, 2))
+    model = ModelWithTrainingArg()
+    model.compile(
+        loss='mse',
+        optimizer='sgd',
+        run_eagerly=testing_utils.should_run_eagerly())
+    model.fit(x, x, epochs=1)
+
+    if testing_utils.should_run_eagerly():
+      expected_training_arg = True
+    else:
+      expected_training_arg = keras.backend.symbolic_learning_phase()
+
+    self.assertEqual(model.training, expected_training_arg)
+    self.assertEqual(model.l1.training, expected_training_arg)
+
+  @keras_parameterized.run_all_keras_modes
+  def test_error_when_model_is_not_compiled(self):
+    inputs = keras.Input(shape=(1,))
+    outputs = keras.layers.Dense(1)(inputs)
+    model = keras.Model(inputs, outputs)
+    with self.assertRaisesRegex(RuntimeError, 'must compile your model'):
+      model.fit(np.ones((1, 1)), np.ones((1, 1)))
+
+    class MyModel(keras.Model):
+
+      def call(self, x):
+        self.add_loss(math_ops.reduce_sum(x))
+        return x
+
+    model = MyModel()
+    with self.assertRaisesRegex(RuntimeError, 'must compile your model'):
+      model.fit(np.random.random((32, 1)), epochs=2)
 
 
 class TestExceptionsAndWarnings(keras_parameterized.TestCase):
@@ -2608,6 +2664,14 @@ class TestTrainingWithMetrics(keras_parameterized.TestCase):
     model = keras.models.Model(x, y)
     model.add_metric(
         math_ops.reduce_sum(y), name='metric_1', aggregation='mean')
+
+    if context.executing_eagerly():
+      # This is not a use case in v1 graph mode.
+      mean_result = metrics_module.Mean()(y)
+      with self.assertRaisesRegex(
+          ValueError, 'Expected a symbolic Tensor for the metric value'):
+        model.add_metric(mean_result, name='metric_2')
+
     with self.assertRaisesRegex(
         ValueError, 'Using the result of calling a `Metric` object '):
       with keras.backend.get_graph().as_default():
@@ -2735,6 +2799,13 @@ class TestTrainingWithMetrics(keras_parameterized.TestCase):
     model = keras.models.Model(x, y)
     model.add_metric(
         math_ops.reduce_sum(y), name='metric_3', aggregation='mean')
+
+    if context.executing_eagerly():
+      # This is not a use case in v1 graph mode.
+      mean_result = metrics_module.Mean()(y)
+      with self.assertRaisesRegex(
+          ValueError, 'Expected a symbolic Tensor for the metric value'):
+        model.add_metric(mean_result, name='metric_4')
 
     with self.assertRaisesRegex(
         ValueError, 'Using the result of calling a `Metric` object '):

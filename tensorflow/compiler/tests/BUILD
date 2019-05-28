@@ -65,6 +65,7 @@ py_test(
     name = "xla_test_test",
     size = "small",
     srcs = ["xla_test_test.py"],
+    python_version = "PY2",
     deps = [
         ":xla_test",
     ],
@@ -953,7 +954,7 @@ tf_xla_py_test(
 
 tf_xla_py_test(
     name = "ternary_ops_test",
-    size = "small",
+    size = "medium",
     srcs = ["ternary_ops_test.py"],
     deps = [
         ":xla_test",

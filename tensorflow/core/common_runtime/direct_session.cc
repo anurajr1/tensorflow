@@ -33,6 +33,7 @@ limitations under the License.
 #include "tensorflow/core/common_runtime/metrics.h"
 #include "tensorflow/core/common_runtime/optimization_registry.h"
 #include "tensorflow/core/common_runtime/process_util.h"
+#include "tensorflow/core/common_runtime/rendezvous_mgr.h"
 #include "tensorflow/core/common_runtime/scoped_allocator_mgr.h"
 #include "tensorflow/core/common_runtime/step_stats_collector.h"
 #include "tensorflow/core/framework/function.h"
@@ -1261,6 +1262,11 @@ Status DirectSession::CreateExecutors(
       if (kernel && !OpSegment::ShouldOwnKernel(lib, kernel->type_string()))
         delete kernel;
     };
+    params.rendezvous_factory = [](const int64, const DeviceMgr* device_mgr,
+                                   Rendezvous** r) {
+      *r = new IntraProcessRendezvous(device_mgr);
+      return Status::OK();
+    };
 
     optimizer.Optimize(lib, options_.env, device, &partition_graph,
                        /*shape_map=*/nullptr);
@@ -1340,8 +1346,8 @@ Status DirectSession::GetOrCreateExecutors(
 
   // Fast lookup path, no sorting.
   const string key = strings::StrCat(
-      str_util::Join(inputs, ","), "->", str_util::Join(outputs, ","), "/",
-      str_util::Join(target_nodes, ","), "/", run_state_args->is_partial_run,
+      absl::StrJoin(inputs, ","), "->", absl::StrJoin(outputs, ","), "/",
+      absl::StrJoin(target_nodes, ","), "/", run_state_args->is_partial_run,
       "/", debug_tensor_watches_summary);
   // Set the handle, if it's needed to log memory or for partial run.
   if (handle_name_counter_value >= 0) {
@@ -1373,8 +1379,8 @@ Status DirectSession::GetOrCreateExecutors(
   std::sort(tn_sorted.begin(), tn_sorted.end());
 
   const string sorted_key = strings::StrCat(
-      str_util::Join(inputs_sorted, ","), "->",
-      str_util::Join(outputs_sorted, ","), "/", str_util::Join(tn_sorted, ","),
+      absl::StrJoin(inputs_sorted, ","), "->",
+      absl::StrJoin(outputs_sorted, ","), "/", absl::StrJoin(tn_sorted, ","),
       "/", run_state_args->is_partial_run, "/", debug_tensor_watches_summary);
   // Set the handle, if its needed to log memory or for partial run.
   if (handle_name_counter_value >= 0) {
@@ -1543,7 +1549,7 @@ Status DirectSession::CreateGraphs(
           "Creating a partition for ", local_partition_name,
           " which doesn't exist in the list of available devices. Available "
           "devices: ",
-          str_util::Join(device_names, ","));
+          absl::StrJoin(device_names, ","));
     }
   }
 

@@ -22,8 +22,8 @@ import copy
 from tensorflow.python.eager import context
 from tensorflow.python.framework import dtypes
 from tensorflow.python.framework import ops
+from tensorflow.python.keras import backend
 from tensorflow.python.keras.engine import base_layer
-from tensorflow.python.keras.engine import base_layer_utils
 from tensorflow.python.ops import variable_scope as vs
 from tensorflow.python.ops import variables as tf_variables
 from tensorflow.python.training.tracking import base as trackable
@@ -64,7 +64,7 @@ def keras_style_scope():
   class RNNModel(tf.keras.Model):
 
     def __init__(self, name):
-      super(RNNModel, self.).__init__(name=name)
+      super(RNNModel, self).__init__(name=name)
       self.rnn = tf.compat.v1.nn.rnn_cell.MultiRNNCell(
         [tf.compat.v1.nn.rnn_cell.LSTMCell(64) for _ in range(2)])
 
@@ -250,11 +250,12 @@ class Layer(base_layer.Layer):
   def _make_unique_name(self, name_uid_map=None, avoid_names=None,
                         namespace='', zero_based=False):
     base_name = base_layer.to_snake_case(self.__class__.__name__)
-    name = base_layer_utils.unique_layer_name(base_name,
-                                              name_uid_map=name_uid_map,
-                                              avoid_names=avoid_names,
-                                              namespace=namespace,
-                                              zero_based=zero_based)
+    name = backend.unique_object_name(
+        base_name,
+        name_uid_map=name_uid_map,
+        avoid_names=avoid_names,
+        namespace=namespace,
+        zero_based=zero_based)
     return (name, base_name)
 
   @property
@@ -539,6 +540,32 @@ class Layer(base_layer.Layer):
       # Update global default collections.
       _add_elements_to_collection(self.updates, ops.GraphKeys.UPDATE_OPS)
     return outputs
+
+  def add_update(self, updates, inputs=None):
+    if callable(updates):
+      updates = updates()
+
+    if context.executing_eagerly():
+      return  # Updates already applied when in eager mode.
+
+    def process_update(x):
+      if isinstance(x, ops.Operation):
+        return x
+      elif hasattr(x, 'op'):
+        return x.op
+      else:
+        return ops.convert_to_tensor(x)
+
+    if not isinstance(updates, list):
+      updates = [updates]
+    updates = [process_update(x) for x in updates]
+    self._updates += updates
+    if inputs is None:
+      for u in updates:
+        u._unconditional_update = True  # pylint: disable=protected-access
+    else:
+      for u in updates:
+        u._unconditional_update = False  # pylint: disable=protected-access
 
   def __deepcopy__(self, memo):
     no_copy = set(['_graph'])

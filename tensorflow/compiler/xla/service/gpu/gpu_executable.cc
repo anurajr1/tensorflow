@@ -119,7 +119,8 @@ Status GpuExecutable::ExecuteThunks(
       op_annotation.emplace(
           thunk->hlo_instruction()->ToString(HloPrintOptions::Canonical()),
           absl::StrCat("#tf_op=", hlo->metadata().op_name(),
-                       ",hlo_op=", hlo->name(), "#"));
+                       ",hlo_op=", hlo->name(),
+                       ",hlo_module=", hlo->GetModule()->name(), "#"));
     }
 
     TF_RETURN_IF_ERROR(thunk->Initialize(*this, executor));
@@ -136,7 +137,8 @@ Status GpuExecutable::ExecuteThunks(
             << thunk->hlo_instruction()->ToString() << " on stream "
             << stream_no;
     TF_RETURN_IF_ERROR(
-        thunk->ExecuteOnStream(buffer_allocations, stream, &profiler));
+        thunk->ExecuteOnStream(buffer_allocations, stream,
+                               run_options->run_options().run_id(), &profiler));
     if (thunk_schedule_->Depended(thunk)) {
       auto finish_event = absl::make_unique<se::Event>(main_stream->parent());
       finish_event->Init();
@@ -230,7 +232,7 @@ StatusOr<ScopedShapedBuffer> GpuExecutable::Execute(
     const ServiceExecutableRunOptions* run_options,
     absl::Span<const ShapedBuffer* const> arguments,
     HloExecutionProfile* hlo_execution_profile, bool block_host_until_done) {
-  DeviceMemoryAllocator* memory_allocator = run_options->allocator();
+  se::DeviceMemoryAllocator* memory_allocator = run_options->allocator();
 
   if (GetRootPointsToSet().IsAmbiguous()) {
     return Unimplemented("Points-to set of root instruction is ambiguous");
@@ -348,7 +350,7 @@ StatusOr<ScopedShapedBuffer> GpuExecutable::ExecuteOnStream(
 StatusOr<ScopedShapedBuffer> GpuExecutable::ExecuteAsyncOnStream(
     const ServiceExecutableRunOptions* run_options,
     absl::Span<const ShapedBuffer* const> arguments) {
-  DeviceMemoryAllocator* memory_allocator = run_options->allocator();
+  se::DeviceMemoryAllocator* memory_allocator = run_options->allocator();
   // Force synchronous execution if the allocator requires it.
   bool block_host_until_done =
       !memory_allocator->AllowsAsynchronousDeallocation();

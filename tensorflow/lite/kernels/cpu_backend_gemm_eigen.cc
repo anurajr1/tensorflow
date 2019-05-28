@@ -13,6 +13,8 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
+#ifndef TFLITE_WITH_RUY
+
 #include "tensorflow/lite/kernels/cpu_backend_gemm_eigen.h"
 
 // See b/131835803: in TFLite code, because eigen_spatial_convolutions.h does
@@ -24,6 +26,7 @@ limitations under the License.
 #include "third_party/eigen3/Eigen/Core"
 #include "tensorflow/lite/kernels/cpu_backend_context.h"
 #include "tensorflow/lite/kernels/cpu_backend_gemm_params.h"
+#include "tensorflow/lite/kernels/internal/common.h"
 
 namespace tflite {
 namespace cpu_backend_gemm {
@@ -47,8 +50,6 @@ void GemmImplUsingEigen::Run(
                                      Eigen::ColMajor>>;
   using EigenMatrixMapColMajorMutable = Eigen::Map<
       Eigen::Matrix<float, Eigen::Dynamic, Eigen::Dynamic, Eigen::ColMajor>>;
-  using EigenVectorMapConst = Eigen::Map<
-      const Eigen::Matrix<float, Eigen::Dynamic, 1, Eigen::ColMajor>>;
 
   EigenMatrixMapRowMajorConst eigen_lhs(lhs_data, lhs_params.rows,
                                         lhs_params.cols);
@@ -66,10 +67,8 @@ void GemmImplUsingEigen::Run(
   }
 
   if (params.bias) {
-    EigenVectorMapConst eigen_bias(params.bias, lhs_params.rows);
-    eigen_dst = (eigen_dst.colwise() + eigen_bias)
-                    .cwiseMin(params.clamp_max)
-                    .cwiseMax(params.clamp_min);
+    BiasAndClamp(params.clamp_min, params.clamp_max, dst_params.rows,
+                 params.bias, dst_params.rows * dst_params.cols, dst_data);
   } else {
     eigen_dst = eigen_dst.cwiseMin(params.clamp_max).cwiseMax(params.clamp_min);
   }
@@ -78,3 +77,5 @@ void GemmImplUsingEigen::Run(
 }  // namespace detail
 }  // namespace cpu_backend_gemm
 }  // namespace tflite
+
+#endif  // not TFLITE_WITH_RUY

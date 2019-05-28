@@ -259,6 +259,22 @@ FunctionDef XAddX() {
       });
 }
 
+FunctionDef XAddY() {
+  return FDH::Define(
+      // Name
+      "XAddY",
+      // Args
+      {"x: T", "y: T"},
+      // Return values
+      {"z: T"},
+      // Attr def
+      {"T: {float, double, int32, int64}"},
+      // Nodes
+      {
+          {{"z"}, "Add", {"x", "y"}, {{"T", "$T"}}},
+      });
+}
+
 FunctionDef XTimesTwoInt32() {
   const Tensor kTwo = test::AsScalar<int64>(2);
   return FDH::Define(
@@ -567,6 +583,23 @@ FunctionDef MakeTensorSliceDataset() {
         {"x"},
         {{"Toutput_types", "$Toutput_types"},
          {"output_shapes", "$output_shapes"}}}});
+}
+
+FunctionDef Unique() {
+  return FDH::Create(
+      // Name
+      "GetUnique",
+      // Args
+      {"x:T"},
+      // Return values
+      {"y:T", "idx: out_idx"},
+      // Attr def
+      {"T: type", "out_idx: {int32, int64} = DT_INT32"},
+      // Nodes
+      {
+          {{"result"}, "Unique", {"x"}, {{"T", "$T"}, {"out_idx", "$out_idx"}}},
+      },
+      {{"y", "result:y:0"}, {"idx", "result:idx:0"}});
 }
 
 void FunctionTestSchedClosure(std::function<void()> fn) {

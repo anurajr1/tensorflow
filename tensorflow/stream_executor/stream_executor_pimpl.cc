@@ -24,6 +24,7 @@ limitations under the License.
 #include <utility>
 
 #include "absl/base/const_init.h"
+#include "absl/strings/ascii.h"
 #include "absl/strings/str_cat.h"
 #include "absl/strings/str_format.h"
 #include "absl/synchronization/notification.h"
@@ -33,6 +34,7 @@ limitations under the License.
 #include "tensorflow/stream_executor/lib/env.h"
 #include "tensorflow/stream_executor/lib/error.h"
 #include "tensorflow/stream_executor/lib/stacktrace.h"
+#include "tensorflow/stream_executor/lib/statusor.h"
 #include "tensorflow/stream_executor/lib/threadpool.h"
 #include "tensorflow/stream_executor/platform/port.h"
 #include "tensorflow/stream_executor/rng.h"
@@ -65,8 +67,8 @@ std::atomic_int_fast64_t correlation_id_generator(0);
 
 }  // namespace
 
-template <typename BeginCallT, typename CompleteCallT,
-          typename ReturnT, typename... BeginArgsT>
+template <typename BeginCallT, typename CompleteCallT, typename ReturnT,
+          typename... BeginArgsT>
 class ScopedTracer {
  public:
   ScopedTracer(StreamExecutor *stream_exec, BeginCallT begin_call,
@@ -103,7 +105,7 @@ class ScopedTracer {
 
   StreamExecutor *stream_exec_;
   CompleteCallT complete_call_;
-  const ReturnT* result_;
+  const ReturnT *result_;
   int64 correlation_id_;
 };
 
@@ -118,9 +120,9 @@ MakeScopedTracer(StreamExecutor *stream_exec, BeginCallT begin_call,
       std::forward<BeginArgsT>(begin_args)...);
 }
 
-#define SCOPED_TRACE(LOC, ...)                                      \
-  auto tracer = MakeScopedTracer(this, &LOC ## Begin,               \
-                                 &LOC ## Complete, ## __VA_ARGS__);
+#define SCOPED_TRACE(LOC, ...) \
+  auto tracer =                \
+      MakeScopedTracer(this, &LOC##Begin, &LOC##Complete, ##__VA_ARGS__);
 
 /* static */ absl::Mutex StreamExecutor::static_mu_{absl::kConstInit};
 
@@ -783,8 +785,7 @@ void StreamExecutor::EnqueueOnBackgroundThread(std::function<void()> task) {
 void StreamExecutor::CreateAllocRecord(void *opaque, uint64 bytes) {
   if (FLAGS_check_device_leaks && opaque != nullptr && bytes != 0) {
     absl::MutexLock lock(&mu_);
-    mem_allocs_[opaque] = AllocRecord{
-        bytes, ""};
+    mem_allocs_[opaque] = AllocRecord{bytes, ""};
     mem_alloc_bytes_ += bytes;
   }
 }
@@ -850,6 +851,68 @@ void StreamExecutor::SubmitTrace(TraceCallT trace_call, ArgsT &&... args) {
 
 internal::StreamExecutorInterface *StreamExecutor::implementation() {
   return implementation_->GetUnderlyingExecutor();
+}
+
+StreamExecutorMemoryAllocator::StreamExecutorMemoryAllocator(
+    StreamExecutor *executor)
+    : DeviceMemoryAllocator(executor->platform()) {
+  stream_executors_ = {executor};
+}
+
+StreamExecutorMemoryAllocator::StreamExecutorMemoryAllocator(
+    const Platform *platform,
+    absl::Span<StreamExecutor *const> stream_executors)
+    : DeviceMemoryAllocator(platform),
+      stream_executors_(stream_executors.begin(), stream_executors.end()) {}
+
+port::StatusOr<OwningDeviceMemory> StreamExecutorMemoryAllocator::Allocate(
+    int device_ordinal, uint64 size, bool retry_on_failure) {
+  TF_ASSIGN_OR_RETURN(StreamExecutor * executor,
+                      GetStreamExecutor(device_ordinal));
+  DeviceMemoryBase result = executor->AllocateArray<uint8>(size);
+  if (size > 0 && result == nullptr) {
+    return tensorflow::errors::ResourceExhausted(absl::StrFormat(
+        "Failed to allocate request for %s (%uB) on device ordinal %d",
+        tensorflow::strings::HumanReadableNumBytes(size), size,
+        device_ordinal));
+  }
+  VLOG(3) << absl::StreamFormat(
+      "Allocated %s (%uB) on device ordinal %d: %p",
+      tensorflow::strings::HumanReadableNumBytes(size), size, device_ordinal,
+      result.opaque());
+  return OwningDeviceMemory(result, device_ordinal, this);
+}
+
+port::Status StreamExecutorMemoryAllocator::Deallocate(int device_ordinal,
+                                                       DeviceMemoryBase mem) {
+  if (!mem.is_null()) {
+    TF_ASSIGN_OR_RETURN(StreamExecutor * executor,
+                        GetStreamExecutor(device_ordinal));
+    VLOG(3) << absl::StreamFormat("Freeing %p on device ordinal %d",
+                                  mem.opaque(), device_ordinal);
+    executor->Deallocate(&mem);
+  }
+  return port::Status::OK();
+}
+
+port::StatusOr<StreamExecutor *>
+StreamExecutorMemoryAllocator::GetStreamExecutor(int device_ordinal) {
+  if (device_ordinal < 0) {
+    return tensorflow::errors::InvalidArgument(absl::StrFormat(
+        "device ordinal value (%d) must be non-negative", device_ordinal));
+  }
+  for (StreamExecutor *se : stream_executors_) {
+    if (se->device_ordinal() == device_ordinal) {
+      return se;
+    }
+  }
+  return tensorflow::errors::NotFound(
+      absl::StrFormat("Device %s:%d present but not supported",
+                      platform()->Name(), device_ordinal));
+}
+
+bool StreamExecutorMemoryAllocator::AllowsAsynchronousDeallocation() const {
+  return false;
 }
 
 }  // namespace stream_executor

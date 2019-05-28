@@ -92,7 +92,7 @@ class MasterSession::ReffedClientGraph : public core::RefCounted {
           n->name(),
           NodeDetails(n->type_string(),
                       strings::StrCat(
-                          "(", str_util::Join(n->requested_inputs(), ", "))));
+                          "(", absl::StrJoin(n->requested_inputs(), ", "))));
     }
   }
 
@@ -1281,6 +1281,13 @@ Status MasterSession::CreateWorkerSessions(
     workers[i].name = &worker_names[i];
     workers[i].worker = worker_cache->CreateWorker(worker_names[i]);
     workers[i].request.set_session_handle(handle_);
+    if (session_opts_.config.experimental()
+            .share_cluster_devices_in_session()) {
+      for (const auto& remote_dev : devices_->devices()) {
+        *workers[i].request.add_cluster_device_attributes() =
+            remote_dev->attributes();
+      }
+    }
 
     DeviceNameUtils::ParsedName name;
     if (!DeviceNameUtils::ParseFullName(worker_names[i], &name)) {

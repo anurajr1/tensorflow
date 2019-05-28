@@ -20,10 +20,12 @@ limitations under the License.
 #include "tensorflow/core/framework/partial_tensor_shape.h"
 #include "tensorflow/core/framework/stats_aggregator.h"
 #include "tensorflow/core/framework/tensor.h"
+#include "tensorflow/core/kernels/data/name_utils.h"
 #include "tensorflow/core/kernels/data/stats_utils.h"
 #include "tensorflow/core/lib/core/error_codes.pb.h"
 #include "tensorflow/core/lib/gtl/cleanup.h"
 #include "tensorflow/core/lib/strings/str_util.h"
+#include "tensorflow/core/lib/strings/stringprintf.h"
 
 namespace tensorflow {
 namespace data {
@@ -33,7 +35,12 @@ namespace data {
 
 // Determines the fraction of slack time by which to delay prefetching of data.
 constexpr double kSleepFactor = 0.2;
-constexpr char kDatasetName[] = "Prefetch";
+constexpr const char PrefetchDatasetOp::kDatasetType[];
+constexpr const char PrefetchDatasetOp::kInputDataset[];
+constexpr const char PrefetchDatasetOp::kBufferSize[];
+constexpr const char PrefetchDatasetOp::kOutputTypes[];
+constexpr const char PrefetchDatasetOp::kOutputShapes[];
+constexpr const char PrefetchDatasetOp::kSlackPeriod[];
 
 class PrefetchDatasetOp::Dataset : public DatasetBase {
  public:
@@ -50,8 +57,8 @@ class PrefetchDatasetOp::Dataset : public DatasetBase {
 
   std::unique_ptr<IteratorBase> MakeIteratorInternal(
       const string& prefix) const override {
-    return absl::make_unique<Iterator>(
-        Iterator::Params{this, strings::StrCat(prefix, "::", kDatasetName)});
+    return absl::make_unique<Iterator>(Iterator::Params{
+        this, name_utils::IteratorPrefix(kDatasetType, prefix)});
   }
 
   const DataTypeVector& output_dtypes() const override {
@@ -62,7 +69,9 @@ class PrefetchDatasetOp::Dataset : public DatasetBase {
     return input_->output_shapes();
   }
 
-  string DebugString() const override { return "PrefetchDatasetOp::Dataset"; }
+  string DebugString() const override {
+    return name_utils::DatasetDebugString(kDatasetType);
+  }
 
   int64 Cardinality() const override { return input_->Cardinality(); }
 
@@ -78,7 +87,7 @@ class PrefetchDatasetOp::Dataset : public DatasetBase {
     b->BuildAttrValue(slack_period_, &slack_period_attr);
     TF_RETURN_IF_ERROR(b->AddDataset(
         this, {input_graph_node, buffer_size},
-        {std::make_pair("slack_period", slack_period_attr)}, output));
+        {std::make_pair(kSlackPeriod, slack_period_attr)}, output));
     return Status::OK();
   }
 
@@ -105,6 +114,15 @@ class PrefetchDatasetOp::Dataset : public DatasetBase {
         cancelled_ = true;
         cond_var_.notify_all();
       }
+    }
+
+    string BuildTraceMeName() override {
+      int64 buffer_limit;
+      {
+        tf_shared_lock l(mu_);
+        buffer_limit = auto_tuner_.buffer_limit();
+      }
+      return strings::StrCat(prefix(), "#buffer_limit=", buffer_limit, "#");
     }
 
     Status Initialize(IteratorContext* ctx) override {
@@ -173,7 +191,7 @@ class PrefetchDatasetOp::Dataset : public DatasetBase {
       mutex_lock l(mu_);
       TF_RETURN_IF_ERROR(SaveInput(writer, input_impl_));
       TF_RETURN_IF_ERROR(
-          writer->WriteScalar(full_name("buffer_size"), buffer_.size()));
+          writer->WriteScalar(full_name(kBufferSize), buffer_.size()));
       for (size_t i = 0; i < buffer_.size(); i++) {
         auto& buffer_element = buffer_[i];
         TF_RETURN_IF_ERROR(WriteStatus(writer, i, buffer_element.status));
@@ -200,7 +218,7 @@ class PrefetchDatasetOp::Dataset : public DatasetBase {
       size_t buffer_size;
       {
         int64 temp;
-        TF_RETURN_IF_ERROR(reader->ReadScalar(full_name("buffer_size"), &temp));
+        TF_RETURN_IF_ERROR(reader->ReadScalar(full_name(kBufferSize), &temp));
         buffer_size = static_cast<size_t>(temp);
       }
       for (size_t i = 0; i < buffer_size; i++) {
@@ -424,9 +442,9 @@ class PrefetchDatasetOp::Dataset : public DatasetBase {
 
 void PrefetchDatasetOp::MakeDataset(OpKernelContext* ctx, DatasetBase* input,
                                     DatasetBase** output) {
-  int64 buffer_size;
+  int64 buffer_size = 0;
   OP_REQUIRES_OK(ctx,
-                 ParseScalarArgument<int64>(ctx, "buffer_size", &buffer_size));
+                 ParseScalarArgument<int64>(ctx, kBufferSize, &buffer_size));
   OP_REQUIRES(ctx,
               buffer_size >= 0 || buffer_size == PrefetchAutotuner::kAutoTune,
               errors::InvalidArgument("buffer_size must be >= 0 or set "
@@ -435,7 +453,7 @@ void PrefetchDatasetOp::MakeDataset(OpKernelContext* ctx, DatasetBase* input,
                                       " for auto-tuning"));
 
   if (buffer_size == PrefetchAutotuner::kAutoTune) {
-    metrics::RecordTFDataAutotune(kDatasetName);
+    metrics::RecordTFDataAutotune(kDatasetType);
   }
 
   *output = new Dataset(ctx, input, buffer_size, slack_period_);

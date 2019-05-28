@@ -23,6 +23,7 @@ import copy
 
 from tensorflow.python.framework import tensor_shape
 from tensorflow.python.keras import backend as K
+from tensorflow.python.keras.engine import base_layer_utils
 from tensorflow.python.keras.engine.base_layer import Layer
 from tensorflow.python.keras.engine.input_spec import InputSpec
 from tensorflow.python.keras.layers.recurrent import _standardize_args
@@ -31,6 +32,7 @@ from tensorflow.python.keras.utils import layer_utils
 from tensorflow.python.keras.utils import tf_utils
 from tensorflow.python.ops import array_ops
 from tensorflow.python.util import nest
+from tensorflow.python.util import tf_inspect
 from tensorflow.python.util.tf_export import keras_export
 
 
@@ -261,6 +263,8 @@ class TimeDistributed(Wrapper):
     if (hasattr(self.layer, 'activity_regularizer') and
         self.layer.activity_regularizer is not None):
       regularization_loss = self.layer.activity_regularizer(y)
+      base_layer_utils.check_graph_consistency(
+          regularization_loss, method='activity_regularizer')
       self.add_loss(regularization_loss, inputs)
     return y
 
@@ -413,12 +417,11 @@ class Bidirectional(Wrapper):
                        '{"sum", "mul", "ave", "concat", None}')
     # Recreate the forward layer from the original layer config, so that it will
     # not carry over any state from the layer.
-    self.forward_layer = layer.__class__.from_config(layer.get_config())
+    self.forward_layer = self._recreate_layer_from_config(layer)
 
     if backward_layer is None:
-      config = layer.get_config()
-      config['go_backwards'] = not config['go_backwards']
-      self.backward_layer = layer.__class__.from_config(config)
+      self.backward_layer = self._recreate_layer_from_config(
+          layer, go_backwards=True)
     else:
       self.backward_layer = backward_layer
       # Keep the custom backward layer config, so that we can save it later. The
@@ -472,6 +475,29 @@ class Bidirectional(Wrapper):
             'Forward layer and backward layer are expected to have the same '
             'value for attribute {attr}, got {forward} and {backward}'.format(
                 attr=a, forward=forward_value, backward=backward_value))
+
+  def _recreate_layer_from_config(self, layer, go_backwards=False):
+    # When recreating the layer from its config, it is possible that the layer
+    # is a RNN layer that contains custom cells. In this case we inspect the
+    # layer and pass the custom cell class as part of the `custom_objects`
+    # argument when calling `from_config`.
+    # See https://github.com/tensorflow/tensorflow/issues/26581 for more detail.
+    config = layer.get_config()
+    if go_backwards:
+      config['go_backwards'] = not config['go_backwards']
+    if 'custom_objects' in tf_inspect.getfullargspec(
+        layer.__class__.from_config).args:
+      custom_objects = {}
+      cell = getattr(layer, 'cell', None)
+      if cell is not None:
+        custom_objects[cell.__class__.__name__] = cell.__class__
+        # For StackedRNNCells
+        stacked_cells = getattr(cell, 'cells', [])
+        for c in stacked_cells:
+          custom_objects[c.__class__.__name__] = c.__class__
+      return layer.__class__.from_config(config, custom_objects=custom_objects)
+    else:
+      return layer.__class__.from_config(config)
 
   @tf_utils.shape_type_conversion
   def compute_output_shape(self, input_shape):

@@ -28,6 +28,7 @@ from tensorflow.python.eager import context
 from tensorflow.python.framework import constant_op
 from tensorflow.python.framework import tensor_shape
 from tensorflow.python.framework import test_util as tf_test_util
+from tensorflow.python.keras.engine import base_layer_utils
 from tensorflow.python.ops.array_ops import concat
 from tensorflow.python.platform import test
 from tensorflow.python.training.tracking import object_identity
@@ -591,10 +592,12 @@ class BidirectionalTest(test.TestCase, parameterized.TestCase):
       assert not layer.updates
       assert not layer.get_updates_for(None)
       assert not layer.get_updates_for(x)
-      layer.forward_layer.add_update(x_reachable_update, inputs=x)
-      layer.forward_layer.add_update(1, inputs=None)
-      layer.backward_layer.add_update(x_reachable_update, inputs=x)
-      layer.backward_layer.add_update(1, inputs=None)
+      # TODO(b/128684069): Remove when Wrapper sublayers are __call__'d.
+      with base_layer_utils.call_context().enter(layer, x, True):
+        layer.forward_layer.add_update(x_reachable_update, inputs=x)
+        layer.forward_layer.add_update(1, inputs=None)
+        layer.backward_layer.add_update(x_reachable_update, inputs=x)
+        layer.backward_layer.add_update(1, inputs=None)
       assert len(layer.updates) == 4
       assert len(layer.get_updates_for(None)) == 2
       assert len(layer.get_updates_for(x)) == 2
@@ -912,6 +915,50 @@ class BidirectionalTest(test.TestCase, parameterized.TestCase):
     layer_from_config = keras.layers.Bidirectional.from_config(config)
     self.assertEqual(layer_from_config.forward_layer.name, 'forward_lstm')
     self.assertEqual(layer_from_config.backward_layer.name, 'backward_lstm_1')
+
+  def test_rnn_with_customized_cell(self):
+    batch = 20
+    dim = 5
+    timesteps = 3
+    units = 5
+    merge_mode = 'sum'
+
+    class ResidualLSTMCell(keras.layers.LSTMCell):
+
+      def call(self, inputs, states, training=None):
+        output, states = super(ResidualLSTMCell, self).call(inputs, states)
+        return output + inputs, states
+
+    cell = ResidualLSTMCell(units)
+    forward_layer = keras.layers.RNN(cell)
+    inputs = keras.Input((timesteps, dim))
+    bidirectional_rnn = keras.layers.Bidirectional(
+        forward_layer, merge_mode=merge_mode)
+    outputs = _to_list(bidirectional_rnn(inputs))
+
+    model = keras.Model(inputs, outputs)
+    model.compile(optimizer='rmsprop', loss='mse')
+    model.fit(
+        np.random.random((batch, timesteps, dim)),
+        np.random.random((batch, units)),
+        epochs=1,
+        batch_size=10)
+
+    # Test stacking
+    cell = [ResidualLSTMCell(units), ResidualLSTMCell(units)]
+    forward_layer = keras.layers.RNN(cell)
+    inputs = keras.Input((timesteps, dim))
+    bidirectional_rnn = keras.layers.Bidirectional(
+        forward_layer, merge_mode=merge_mode)
+    outputs = _to_list(bidirectional_rnn(inputs))
+
+    model = keras.Model(inputs, outputs)
+    model.compile(optimizer='rmsprop', loss='mse')
+    model.fit(
+        np.random.random((batch, timesteps, dim)),
+        np.random.random((batch, units)),
+        epochs=1,
+        batch_size=10)
 
 
 def _to_list(ls):

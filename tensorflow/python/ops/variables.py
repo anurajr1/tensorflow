@@ -192,7 +192,8 @@ class VariableMetaclass(type):
                         constraint=None,
                         use_resource=None,
                         synchronization=VariableSynchronization.AUTO,
-                        aggregation=VariableAggregation.NONE):
+                        aggregation=VariableAggregation.NONE,
+                        shape=None):
     """Call on Variable class. Useful to force the signature."""
     previous_getter = lambda **kwargs: default_variable_creator(None, **kwargs)
     for _, getter in ops.get_default_graph()._variable_creator_stack:  # pylint: disable=protected-access
@@ -215,7 +216,8 @@ class VariableMetaclass(type):
         constraint=constraint,
         use_resource=use_resource,
         synchronization=synchronization,
-        aggregation=aggregation)
+        aggregation=aggregation,
+        shape=shape)
 
   def _variable_v2_call(cls,
                         initial_value=None,
@@ -228,7 +230,8 @@ class VariableMetaclass(type):
                         import_scope=None,
                         constraint=None,
                         synchronization=VariableSynchronization.AUTO,
-                        aggregation=VariableAggregation.NONE):
+                        aggregation=VariableAggregation.NONE,
+                        shape=None):
     """Call on Variable class. Useful to force the signature."""
     previous_getter = lambda **kws: default_variable_creator_v2(None, **kws)
     for _, getter in ops.get_default_graph()._variable_creator_stack:  # pylint: disable=protected-access
@@ -248,7 +251,8 @@ class VariableMetaclass(type):
         import_scope=import_scope,
         constraint=constraint,
         synchronization=synchronization,
-        aggregation=aggregation)
+        aggregation=aggregation,
+        shape=shape)
 
   def __call__(cls, *args, **kwargs):
     if cls is VariableV1:
@@ -379,7 +383,7 @@ class Variable(six.with_metaclass(VariableMetaclass,
 
   def __init__(self,
                initial_value=None,
-               trainable=True,
+               trainable=None,
                validate_shape=True,
                caching_device=None,
                name=None,
@@ -388,7 +392,8 @@ class Variable(six.with_metaclass(VariableMetaclass,
                import_scope=None,
                constraint=None,
                synchronization=VariableSynchronization.AUTO,
-               aggregation=VariableAggregation.NONE):
+               aggregation=VariableAggregation.NONE,
+               shape=None):
     """Creates a new variable with value `initial_value`.
 
     The new variable is added to the graph collections listed in `collections`,
@@ -407,8 +412,9 @@ class Variable(six.with_metaclass(VariableMetaclass,
         callable with no argument that returns the initial value when called. In
         that case, `dtype` must be specified. (Note that initializer functions
         from init_ops.py must first be bound to a shape before being used here.)
-      trainable: If `True`, the default, GradientTapes automatically watch uses
-        of this variable.
+      trainable: If `True`, GradientTapes automatically watch uses
+        of this variable. Defaults to `True` unless `synchronization` is
+        set to `ON_READ`.
       validate_shape: If `False`, allows the variable to be initialized with a
         value of unknown shape. If `True`, the default, the shape of
         `initial_value` must be known.
@@ -444,6 +450,10 @@ class Variable(six.with_metaclass(VariableMetaclass,
       aggregation: Indicates how a distributed variable will be aggregated.
         Accepted values are constants defined in the class
         `tf.VariableAggregation`.
+      shape: (optional) The shape of this variable. If None, the shape of
+        `initial_value` will be used. When setting this argument to
+        `tf.TensorShape(None)` (representing an unspecified shape), the variable
+        can be assigned with values of different shapes.
 
     Raises:
       ValueError: If both `variable_def` and initial_value are specified.
@@ -1352,7 +1362,7 @@ class VariableV1(Variable):
 
   def __init__(self,  # pylint: disable=super-init-not-called
                initial_value=None,
-               trainable=True,
+               trainable=None,
                collections=None,
                validate_shape=True,
                caching_device=None,
@@ -1364,7 +1374,8 @@ class VariableV1(Variable):
                constraint=None,
                use_resource=None,
                synchronization=VariableSynchronization.AUTO,
-               aggregation=VariableAggregation.NONE):
+               aggregation=VariableAggregation.NONE,
+               shape=None):
     """Creates a new variable with value `initial_value`.
 
     The new variable is added to the graph collections listed in `collections`,
@@ -1383,9 +1394,10 @@ class VariableV1(Variable):
         callable with no argument that returns the initial value when called. In
         that case, `dtype` must be specified. (Note that initializer functions
         from init_ops.py must first be bound to a shape before being used here.)
-      trainable: If `True`, the default, also adds the variable to the graph
+      trainable: If `True`, also adds the variable to the graph
         collection `GraphKeys.TRAINABLE_VARIABLES`. This collection is used as
         the default list of variables to use by the `Optimizer` classes.
+        Defaults to `True` unless `synchronization` is set to `ON_READ`.
       collections: List of graph collections keys. The new variable is added to
         these collections. Defaults to `[GraphKeys.GLOBAL_VARIABLES]`.
       validate_shape: If `False`, allows the variable to be initialized with a
@@ -1417,8 +1429,19 @@ class VariableV1(Variable):
         (which must have the same shape). Constraints are not safe to
         use when doing asynchronous distributed training.
       use_resource: whether to use resource variables.
-      synchronization: unused
-      aggregation: unused
+      synchronization: Indicates when a distributed a variable will be
+        aggregated. Accepted values are constants defined in the class
+        `tf.VariableSynchronization`. By default the synchronization is set to
+        `AUTO` and the current `DistributionStrategy` chooses
+        when to synchronize. If `synchronization` is set to `ON_READ`,
+        `trainable` must not be set to `True`.
+      aggregation: Indicates how a distributed variable will be aggregated.
+        Accepted values are constants defined in the class
+        `tf.VariableAggregation`.
+      shape: (optional) The shape of this variable. If None, the shape of
+        `initial_value` will be used. When setting this argument to
+        `tf.TensorShape(None)` (representing an unspecified shape), the variable
+        can be assigned with values of different shapes.
 
     Raises:
       ValueError: If both `variable_def` and initial_value are specified.
@@ -1436,7 +1459,7 @@ class RefVariable(VariableV1):
 
   def __init__(self,  # pylint: disable=super-init-not-called
                initial_value=None,
-               trainable=True,
+               trainable=None,
                collections=None,
                validate_shape=True,
                caching_device=None,
@@ -1447,7 +1470,8 @@ class RefVariable(VariableV1):
                import_scope=None,
                constraint=None,
                synchronization=None,
-               aggregation=None):
+               aggregation=None,
+               shape=None):
     """Creates a new variable with value `initial_value`.
 
     The new variable is added to the graph collections listed in `collections`,
@@ -1466,9 +1490,10 @@ class RefVariable(VariableV1):
         callable with no argument that returns the initial value when called. In
         that case, `dtype` must be specified. (Note that initializer functions
         from init_ops.py must first be bound to a shape before being used here.)
-      trainable: If `True`, the default, also adds the variable to the graph
+      trainable: If `True`, also adds the variable to the graph
         collection `GraphKeys.TRAINABLE_VARIABLES`. This collection is used as
         the default list of variables to use by the `Optimizer` classes.
+        Defaults to `True` unless `synchronization` is set to `ON_READ`.
       collections: List of graph collections keys. The new variable is added to
         these collections. Defaults to `[GraphKeys.GLOBAL_VARIABLES]`.
       validate_shape: If `False`, allows the variable to be initialized with a
@@ -1508,6 +1533,10 @@ class RefVariable(VariableV1):
       aggregation: Indicates how a distributed variable will be aggregated.
         Accepted values are constants defined in the class
         `tf.VariableAggregation`.
+      shape: (optional) The shape of this variable. If None, the shape of
+        `initial_value` will be used. When setting this argument to
+        `tf.TensorShape(None)` (representing an unspecified shape), the variable
+        can be assigned with values of different shapes.
 
     Raises:
       ValueError: If both `variable_def` and initial_value are specified.
@@ -1535,7 +1564,8 @@ class RefVariable(VariableV1):
           expected_shape=expected_shape,
           constraint=constraint,
           synchronization=synchronization,
-          aggregation=aggregation)
+          aggregation=aggregation,
+          shape=shape)
 
   def __repr__(self):
     if context.executing_eagerly() and not self._in_graph_mode:
@@ -1548,7 +1578,7 @@ class RefVariable(VariableV1):
 
   def _init_from_args(self,
                       initial_value=None,
-                      trainable=True,
+                      trainable=None,
                       collections=None,
                       validate_shape=True,
                       caching_device=None,
@@ -1557,7 +1587,8 @@ class RefVariable(VariableV1):
                       expected_shape=None,
                       constraint=None,
                       synchronization=None,
-                      aggregation=None):
+                      aggregation=None,
+                      shape=None):
     """Creates a new variable from arguments.
 
     Args:
@@ -1567,9 +1598,10 @@ class RefVariable(VariableV1):
         callable with no argument that returns the initial value when called.
         (Note that initializer functions from init_ops.py must first be bound
          to a shape before being used here.)
-      trainable: If `True`, the default, also adds the variable to the graph
+      trainable: If `True`, also adds the variable to the graph
         collection `GraphKeys.TRAINABLE_VARIABLES`. This collection is used as
         the default list of variables to use by the `Optimizer` classes.
+        Defaults to `True` unless `synchronization` is set to `ON_READ`.
       collections: List of graph collections keys. The new variable is added to
         these collections. Defaults to `[GraphKeys.GLOBAL_VARIABLES]`.
       validate_shape: If `False`, allows the variable to be initialized with a
@@ -1603,6 +1635,10 @@ class RefVariable(VariableV1):
       aggregation: Indicates how a distributed variable will be aggregated.
         Accepted values are constants defined in the class
         `tf.VariableAggregation`.
+      shape: (optional) The shape of this variable. If None, the shape of
+        `initial_value` will be used. When setting this argument to
+        `tf.TensorShape(None)` (representing an unspecified shape), the variable
+        can be assigned with values of different shapes.
 
     Raises:
       ValueError: If the initial value is not specified, or does not have a
@@ -1660,8 +1696,9 @@ class RefVariable(VariableV1):
             with ops.name_scope("Initializer"), ops.device(None):
               self._initial_value = ops.convert_to_tensor(
                   initial_value(), name="initial_value", dtype=dtype)
-              shape = (self._initial_value.get_shape()
-                       if validate_shape else tensor_shape.unknown_shape())
+              if shape is None:
+                shape = (self._initial_value.get_shape()
+                         if validate_shape else tensor_shape.unknown_shape())
             self._variable = state_ops.variable_op_v2(
                 shape,
                 self._initial_value.dtype.base_dtype,
@@ -1679,9 +1716,10 @@ class RefVariable(VariableV1):
                 "construct, such as a loop or conditional. When creating a "
                 "variable inside a loop or conditional, use a lambda as the "
                 "initializer." % name)
-          # pylint: enable=protected-access
-          shape = (self._initial_value.get_shape()
-                   if validate_shape else tensor_shape.unknown_shape())
+          if shape is None:
+            # pylint: enable=protected-access
+            shape = (self._initial_value.get_shape()
+                     if validate_shape else tensor_shape.unknown_shape())
           # In this case, the variable op can't be created until after the
           # initial_value has been converted to a Tensor with a known type.
           self._variable = state_ops.variable_op_v2(

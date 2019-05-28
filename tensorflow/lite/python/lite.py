@@ -172,7 +172,7 @@ class TFLiteConverterBase(object):
             "Provide an input generator for representative_dataset")
     elif self._int8_target_required():
       raise ValueError("representative_dataset is required when specifying "
-                       "TFLITE_BUILTINs_INT8 target.")
+                       "TFLITE_BUILTINS_INT8 target.")
 
   def _int8_target_required(self):
     return set([OpsSet.TFLITE_BUILTINS_INT8]) == set(self._target_ops)
@@ -402,8 +402,8 @@ class TFLiteConverterV2(TFLiteConverterBase):
 class TFLiteConverter(TFLiteConverterBase):
   """Convert a TensorFlow model into `output_format`.
 
-  This is used to convert from a TensorFlow GraphDef or SavedModel into either a
-  TFLite FlatBuffer or graph visualization.
+  This is used to convert from a TensorFlow GraphDef, SavedModel or tf.keras
+  model into either a TFLite FlatBuffer or graph visualization.
 
   Attributes:
     inference_type: Target data type of real-number arrays in the output file.
@@ -490,10 +490,12 @@ class TFLiteConverter(TFLiteConverterBase):
     # Converting a SavedModel.
     converter = lite.TFLiteConverter.from_saved_model(saved_model_dir)
     tflite_model = converter.convert()
+    open("converted_model.tflite", "wb").write(tflite_model)
 
     # Converting a tf.keras model.
     converter = lite.TFLiteConverter.from_keras_model_file(keras_model)
     tflite_model = converter.convert()
+    open("converted_model.tflite", "wb").write(tflite_model)
     ```
   """
 

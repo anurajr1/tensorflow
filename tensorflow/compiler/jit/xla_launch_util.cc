@@ -167,34 +167,8 @@ Status SnapshotResourceVariables(OpKernelContext* ctx,
   return Status::OK();
 }
 
-XlaAllocator::XlaAllocator(const se::Platform* platform, Allocator* wrapped)
-    : xla::DeviceMemoryAllocator(platform), wrapped_(wrapped) {}
-
-XlaAllocator::~XlaAllocator() {}
-
-xla::StatusOr<xla::OwningDeviceMemory> XlaAllocator::Allocate(
-    int device_ordinal, uint64 size, bool retry_on_failure) {
-  AllocationAttributes attrs;
-  attrs.no_retry_on_failure = !retry_on_failure;
-  void* data = nullptr;
-  if (size != 0) {
-    data = wrapped_->AllocateRaw(Allocator::kAllocatorAlignment, size, attrs);
-    if (data == nullptr) {
-      return errors::ResourceExhausted(
-          "Out of memory while trying to allocate ", size, " bytes.");
-    }
-  }
-  return xla::OwningDeviceMemory(se::DeviceMemoryBase(data, size),
-                                 device_ordinal, this);
-}
-
-Status XlaAllocator::Deallocate(int device_ordinal, se::DeviceMemoryBase mem) {
-  wrapped_->DeallocateRaw(mem.opaque());
-  return Status::OK();
-}
-
 XlaComputationLaunchContext::XlaComputationLaunchContext(
-    xla::LocalClient* client, xla::DeviceMemoryAllocator* xla_allocator,
+    xla::LocalClient* client, se::DeviceMemoryAllocator* xla_allocator,
     bool allocate_xla_tensors, bool use_multiple_streams)
     : client_(client),
       xla_allocator_(xla_allocator),
@@ -374,7 +348,7 @@ Status XlaComputationLaunchContext::PopulateOutputs(
         } else {
           Tensor output_tensor = XlaTensorBuffer::MakeTensor(
               ctx->expected_output_dtype(i), shape, buffer, allocator);
-          output.set_buffer(xla::OwningDeviceMemory(), {output_num});
+          output.set_buffer(se::OwningDeviceMemory(), {output_num});
           ctx->set_output(i, output_tensor);
         }
         ++output_num;
@@ -435,7 +409,7 @@ Status XlaComputationLaunchContext::PopulateOutputs(
       *variable_infos[i].var()->tensor() = output_tensor;
     } else {
       se::DeviceMemoryBase buffer = output.buffer({output_num});
-      output.set_buffer(xla::OwningDeviceMemory(), {output_num});
+      output.set_buffer(se::OwningDeviceMemory(), {output_num});
       Tensor output_tensor = XlaTensorBuffer::MakeTensor(
           write.type, write.shape, buffer, allocator);
       *variable_infos[i].var()->tensor() = output_tensor;
