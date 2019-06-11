@@ -158,7 +158,7 @@ tf_py_test(
     ],
     tags = [
         "manual",
-        "notap",
+        "nomsan",  # http://b/134927401
     ],
 )
 

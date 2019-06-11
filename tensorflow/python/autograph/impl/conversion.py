@@ -81,6 +81,10 @@ class _ConvertedEntityFactoryInfo(
     source_map: Dict.
   """
 
+  def __str__(self):
+    return '_ConvertedEntityFactoryInfo({} in {})'.format(
+        self.converted_name, self.module_name)
+
   def get_module(self):
     return sys.modules[self.module_name]
 
@@ -344,10 +348,6 @@ def is_whitelisted_for_graph(o, check_call_override=True):
         logging.log(2, 'Whitelisted: %s: %s', o, rule)
         return True
 
-  if hasattr(o, 'autograph_info__') or hasattr(o, '__ag_compiled'):
-    logging.log(2, 'Whitelisted: %s: already converted', o)
-    return True
-
   if tf_inspect.isgeneratorfunction(o):
     logging.warn(
         'Entity %s appears to be a generator function. It will not be converted'
@@ -574,6 +574,7 @@ def _add_self_references(namespace, autograph_module):
     ag_internal = imp.new_module('autograph')
     ag_internal.__dict__.update(autograph_module.__dict__)
     ag_internal.ConversionOptions = converter.ConversionOptions
+    ag_internal.STD = converter.STANDARD_OPTIONS
     ag_internal.Feature = converter.Feature
     ag_internal.utils = utils
     ag_internal.function_scope = function_wrapping.function_scope

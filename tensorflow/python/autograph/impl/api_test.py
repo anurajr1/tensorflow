@@ -30,6 +30,7 @@ import types
 import numpy as np
 
 from tensorflow.python.autograph import utils
+from tensorflow.python.autograph.core import ag_ctx
 from tensorflow.python.autograph.core import converter
 from tensorflow.python.autograph.impl import api
 from tensorflow.python.autograph.pyct import inspect_utils
@@ -43,12 +44,13 @@ from tensorflow.python.keras.layers import core
 from tensorflow.python.ops import gen_math_ops
 from tensorflow.python.ops import variables
 from tensorflow.python.platform import test
+from tensorflow.python.util import function_utils
 from tensorflow.python.util import tf_inspect
 
 tf = utils.fake_tf()
 
 
-testing_global_numeric = 2
+global_n = 2
 
 
 class TestResource(object):
@@ -108,7 +110,7 @@ class ApiTest(test.TestCase):
 
     class TestClass(object):
 
-      @api.do_not_convert(api.RunMode.GRAPH)
+      @api.do_not_convert(run_as=api.RunMode.GRAPH)
       def called_member(self, a):
         return tf.negative(a)
 
@@ -130,7 +132,7 @@ class ApiTest(test.TestCase):
     class TestClass(object):
 
       @api.do_not_convert(
-          api.RunMode.PY_FUNC, return_dtypes=py_func.MatchDType(1))
+          run_as=api.RunMode.PY_FUNC, return_dtypes=py_func.MatchDType(1))
       def called_member(self, a):
         return np.negative(a)
 
@@ -178,17 +180,34 @@ class ApiTest(test.TestCase):
 
     class TestClass(object):
 
-      def called_member(self, a):
+      def test_method(self, a):
         if a < 0:
           a = -a
         return a
 
-      called_member_converted = api.convert()(called_member)
+      test_method_converted = api.convert()(test_method)
 
     tc = TestClass()
     self.assertListEqual(
-        list(tf_inspect.getfullargspec(tc.called_member)),
-        list(tf_inspect.getfullargspec(tc.called_member_converted)))
+        list(tf_inspect.getfullargspec(tc.test_method)),
+        list(tf_inspect.getfullargspec(tc.test_method_converted)))
+
+  def test_do_not_convert_argspec(self):
+
+    class TestClass(object):
+
+      def test_method(self, x, y):
+        z = x + y
+        return z
+
+      test_method_whitelisted = api.do_not_convert(test_method)
+
+    tc = TestClass()
+    self.assertTrue(tf_inspect.ismethod(tc.test_method_whitelisted))
+    # Because the wrapped function is not generated, we can't preserve its
+    # arg spec.
+    self.assertEqual((),
+                     tuple(function_utils.fn_args(tc.test_method_whitelisted)))
 
   @test_util.run_deprecated_v1
   def test_convert_call_site_decorator(self):
@@ -451,6 +470,25 @@ class ApiTest(test.TestCase):
                            (g, constant_op.constant(1)), {})
     self.assertEqual(self.evaluate(x), 1)
 
+  def test_converted_call_forced_when_explicitly_whitelisted(self):
+
+    @api.do_not_convert()
+    def f(x):
+      return x + 1
+
+    x = api.converted_call(
+        f, None,
+        converter.ConversionOptions(recursive=True, force_conversion=True),
+        (constant_op.constant(0),), {})
+    self.assertTrue(self.evaluate(x))
+
+    converted_f = api.to_graph(
+        f, experimental_optional_features=converter.Feature.ALL)
+    x = api.converted_call(converted_f, None,
+                           converter.ConversionOptions(recursive=True), (0,),
+                           {})
+    self.assertEqual(x, 1)
+
   @test_util.run_deprecated_v1
   def test_converted_call_no_user_code(self):
 
@@ -628,6 +666,27 @@ class ApiTest(test.TestCase):
 
     self.assertNoMemoryLeaks(test_fn)
 
+  def test_context_tracking_direct_calls(self):
+
+    @api.do_not_convert()
+    def unconverted_fn():
+      self.assertEqual(
+          ag_ctx.control_status_ctx().status, ag_ctx.Status.DISABLED)
+
+    @api.convert()
+    def converted_fn():
+      self.assertEqual(
+          ag_ctx.control_status_ctx().status, ag_ctx.Status.ENABLED)
+      unconverted_fn()
+      self.assertEqual(
+          ag_ctx.control_status_ctx().status, ag_ctx.Status.ENABLED)
+
+    self.assertEqual(
+        ag_ctx.control_status_ctx().status, ag_ctx.Status.UNSPECIFIED)
+    converted_fn()
+    self.assertEqual(
+        ag_ctx.control_status_ctx().status, ag_ctx.Status.UNSPECIFIED)
+
   def test_to_graph_basic(self):
 
     def test_fn(x, s):
@@ -660,13 +719,14 @@ class ApiTest(test.TestCase):
   def test_to_graph_with_globals(self):
 
     def test_fn(x):
-      global testing_global_numeric
-      testing_global_numeric = x + testing_global_numeric
-      return testing_global_numeric
+      global global_n
+      global_n = x + global_n
+      return global_n
 
-    with self.assertRaisesRegex(
-        NotImplementedError, 'global keyword is not yet supported'):
-      api.to_graph(test_fn)
+    converted_fn = api.to_graph(test_fn)
+    prev_val = global_n
+    converted_fn(10)
+    self.assertGreater(global_n, prev_val)
 
   def test_to_graph_with_kwargs_clashing_converted_call(self):
 
@@ -683,7 +743,7 @@ class ApiTest(test.TestCase):
 
   def test_to_graph_with_kwargs_clashing_unconverted_call(self):
 
-    @api.do_not_convert()
+    @api.do_not_convert
     def called_fn(**kwargs):
       return kwargs['f'] + kwargs['owner']
 
@@ -727,8 +787,7 @@ class ApiTest(test.TestCase):
 
     self.assertNotEqual(converted_recursive.ag_module,
                         converted_non_recursive.ag_module)
-    self.assertIn('internal_convert_user_code=True',
-                  tf_inspect.getsource(converted_recursive))
+    self.assertIn('ag__.STD', tf_inspect.getsource(converted_recursive))
     self.assertNotIn('internal_convert_user_code=False',
                      tf_inspect.getsource(converted_recursive))
     self.assertIn('internal_convert_user_code=False',

@@ -20,8 +20,8 @@ from __future__ import division
 from __future__ import print_function
 
 import collections
-from collections import OrderedDict
 import contextlib
+import datetime
 import functools
 import gc
 import itertools
@@ -49,12 +49,12 @@ from google.protobuf import descriptor_pool
 from google.protobuf import text_format
 
 from tensorflow.core.framework import graph_pb2
-from tensorflow.core.protobuf import config_pb2
 from tensorflow.core.protobuf import rewriter_config_pb2
 from tensorflow.python import pywrap_tensorflow
 from tensorflow.python import tf2
 from tensorflow.python.client import device_lib
 from tensorflow.python.client import session
+from tensorflow.python.compat import compat as fwd_compat
 from tensorflow.python.eager import context
 from tensorflow.python.eager import def_function
 from tensorflow.python.eager import tape
@@ -152,11 +152,13 @@ def assert_equal_graph_def_v2(expected, actual):
     AssertionError: If the `GraphDef`s do not match.
     TypeError: If either argument is not a `GraphDef`.
   """
-  assert_equal_graph_def(actual, expected, checkpoint_v2=True)
+  assert_equal_graph_def(actual, expected, checkpoint_v2=True,
+                         hash_table_shared_name=True)
 
 
 @tf_export(v1=["test.assert_equal_graph_def"])
-def assert_equal_graph_def_v1(actual, expected, checkpoint_v2=False):
+def assert_equal_graph_def_v1(actual, expected, checkpoint_v2=False,
+                              hash_table_shared_name=False):
   """Asserts that two `GraphDef`s are (mostly) the same.
 
   Compares two `GraphDef` protos for equality, ignoring versions and ordering of
@@ -168,15 +170,19 @@ def assert_equal_graph_def_v1(actual, expected, checkpoint_v2=False):
     expected: The `GraphDef` we expected.
     checkpoint_v2: boolean determining whether to ignore randomized attribute
       values that appear in V2 checkpoints.
+    hash_table_shared_name: boolean determining whether to ignore randomized
+      shared_names that appear in HashTableV2 op defs.
 
   Raises:
     AssertionError: If the `GraphDef`s do not match.
     TypeError: If either argument is not a `GraphDef`.
   """
-  assert_equal_graph_def(actual, expected, checkpoint_v2)
+  assert_equal_graph_def(actual, expected, checkpoint_v2,
+                         hash_table_shared_name)
 
 
-def assert_equal_graph_def(actual, expected, checkpoint_v2=False):
+def assert_equal_graph_def(actual, expected, checkpoint_v2=False,
+                           hash_table_shared_name=False):
   if not isinstance(actual, graph_pb2.GraphDef):
     raise TypeError("Expected tf.GraphDef for actual, got %s" %
                     type(actual).__name__)
@@ -187,6 +193,10 @@ def assert_equal_graph_def(actual, expected, checkpoint_v2=False):
   if checkpoint_v2:
     _strip_checkpoint_v2_randomized(actual)
     _strip_checkpoint_v2_randomized(expected)
+
+  if hash_table_shared_name:
+    _strip_hash_table_shared_name(actual)
+    _strip_hash_table_shared_name(expected)
 
   diff = pywrap_tensorflow.EqualGraphDefWrapper(actual.SerializeToString(),
                                                 expected.SerializeToString())
@@ -248,6 +258,19 @@ def _strip_checkpoint_v2_randomized(graph_def):
         if (attr_tensor_string_value and
             re.match(_SHARDED_SAVE_OP_PATTERN, str(attr_tensor_string_value))):
           delete_keys.append(attr_key)
+    for attr_key in delete_keys:
+      del node.attr[attr_key]
+
+
+_TABLE_SHARED_NAME_PATTERN = r"hash_table_[0-9a-z\-]+"
+
+
+def _strip_hash_table_shared_name(graph_def):
+  for node in graph_def.node:
+    delete_keys = []
+    if node.op == "HashTableV2" and "shared_name" in node.attr:
+      if re.match(_TABLE_SHARED_NAME_PATTERN, str(node.attr["shared_name"].s)):
+        delete_keys.append("shared_name")
     for attr_key in delete_keys:
       del node.attr[attr_key]
 
@@ -835,10 +858,10 @@ def _combine_named_parameters(**kwargs):
     corresponding keyword argument values.
   """
   if not kwargs:
-    return [OrderedDict()]
+    return [collections.OrderedDict()]
 
   sort_by_key = lambda k: k[0][0]
-  kwargs = OrderedDict(sorted(kwargs.items(), key=sort_by_key))
+  kwargs = collections.OrderedDict(sorted(kwargs.items(), key=sort_by_key))
   first = list(kwargs.items())[0]
 
   rest = dict(list(kwargs.items())[1:])
@@ -850,9 +873,9 @@ def _combine_named_parameters(**kwargs):
     values = [values]
 
   combinations = [
-      OrderedDict(sorted(list(combined.items()) + [(key, v)], key=sort_by_key))
-      for v in values
-      for combined in rest_combined
+      collections.OrderedDict(sorted(list(combined.items()) + [(key, v)],  # pylint: disable=g-complex-comprehension
+                                     key=sort_by_key))
+      for v in values for combined in rest_combined
   ]
   return combinations
 
@@ -876,14 +899,14 @@ def generate_combinations_with_testcase_name(**kwargs):
   combinations = _combine_named_parameters(**kwargs)
   named_combinations = []
   for combination in combinations:
-    assert isinstance(combination, OrderedDict)
+    assert isinstance(combination, collections.OrderedDict)
     name = "".join([
         "_{}_{}".format("".join(filter(str.isalnum, key)),
                         "".join(filter(str.isalnum, str(value))))
         for key, value in combination.items()
     ])
     named_combinations.append(
-        OrderedDict(
+        collections.OrderedDict(
             list(combination.items()) +
             [("testcase_name", "_test{}".format(name))]))
 
@@ -1531,6 +1554,44 @@ def use_deterministic_cudnn(func):
 
 
 # The description is just for documentation purposes.
+def enable_tf_xla_constant_folding(description):
+
+  if not isinstance(description, str):
+    raise ValueError("'description' should be string, got {}".format(
+        type(description)))
+
+  def enable_tf_xla_constant_folding_impl(func):
+    """Enable constant folding during the call to this function.
+
+    Some tests fail without constant folding.
+
+    Args:
+      func: Function to run with constant folding turned on.
+
+    Returns:
+      Decorated function.
+    """
+
+    def decorator(f):
+
+      def decorated(self, *args, **kwargs):
+        original_var = pywrap_tensorflow.TF_GetXlaConstantFoldingDisabled()
+        pywrap_tensorflow.TF_SetXlaConstantFoldingDisabled(False)
+        result = f(self, *args, **kwargs)
+        pywrap_tensorflow.TF_SetXlaConstantFoldingDisabled(original_var)
+        return result
+
+      return decorated
+
+    if func is not None:
+      return decorator(func)
+
+    return decorator
+
+  return enable_tf_xla_constant_folding_impl
+
+
+# The description is just for documentation purposes.
 def disable_xla(description):
 
   def disable_xla_impl(func):
@@ -1650,14 +1711,28 @@ class EagerSessionWarner(object):
 
 @tf_export("test.TestCase")
 class TensorFlowTestCase(googletest.TestCase):
-  """Base class for tests that need to test TensorFlow."""
+  """Base class for tests that need to test TensorFlow.
+
+  This class sets things up in a sensible manner for running tests of
+  TensorFlow functionality. In particular, it forces immediate compilation for
+  XLA, disabled XLA constant folding (to produce more comparable results), sets
+  random seeds to ensure repeatability.
+
+  The `setUp` method also sets the forward compatibility horizon to the far
+  future. This ensures that if `forward_compatible` is used to safely introduce
+  a new Op, the new code paths are tested. You can disable this behavior by
+  setting the TF_TEST_FORWARD_COMPATIBILITY_TODAY environment variable.
+  """
 
   def __init__(self, methodName="runTest"):  # pylint: disable=invalid-name
     super(TensorFlowTestCase, self).__init__(methodName)
     if is_xla_enabled():
-      pywrap_tensorflow.TF_SetXLaAutoJitMode("2")
+      pywrap_tensorflow.TF_SetXlaAutoJitMode("2")
       pywrap_tensorflow.TF_SetXlaMinClusterSize(1)
       pywrap_tensorflow.TF_SetXlaEnableLazyCompilation(False)
+      # Constant folding secretly runs code on TF:Classic CPU, so we also
+      # disable it here.
+      pywrap_tensorflow.TF_SetXlaConstantFoldingDisabled(True)
 
     self._threads = []
     self._tempdir = None
@@ -1680,6 +1755,17 @@ class TensorFlowTestCase(googletest.TestCase):
     # summary writer.
     context.context().summary_writer = None
 
+    # By default test the eventual case, when forward compatibility switches are
+    # all flipped. If you use forward compatibility tooling, you must make
+    # sure to explicitly test the "before the switch" case by explicitly
+    # specifying a date in your test (using the forward_compatibility_horizon
+    # decorator), otherwise you will lose coverage.
+    self._forward_compatibility_horizon = (
+        fwd_compat._FORWARD_COMPATIBILITY_HORIZON)  # pylint: disable=protected-access
+
+    if not os.environ.get("TF_TEST_FORWARD_COMPATIBILITY_TODAY", None):
+      fwd_compat._FORWARD_COMPATIBILITY_HORIZON = datetime.date(2525, 1, 1)  # pylint: disable=protected-access
+
     # Avoiding calling setUp() for the poorly named test_session method.
     if self.id().endswith(".test_session"):
       self.skipTest("Not a test.")
@@ -1689,6 +1775,14 @@ class TensorFlowTestCase(googletest.TestCase):
       thread.check_termination()
 
     self._ClearCachedSession()
+
+    if not hasattr(self, "_forward_compatibility_horizon"):
+      logging.warn("TensorFlowTestCase.tearDown called without setUp having"
+                   " been called earlier. This is likely because you overrode"
+                   " setUp without calling super().")
+    else:
+      fwd_compat._FORWARD_COMPATIBILITY_HORIZON = (
+          self._forward_compatibility_horizon)  # pylint: disable=protected-access
 
   def _ClearCachedSession(self):
     if self._cached_session is not None:
@@ -2718,12 +2812,10 @@ class TensorFlowTestCase(googletest.TestCase):
       # will be used even when a specific device is supposed to be used.
       allow_soft_placement = not force_gpu
       if config is None:
-        config = config_pb2.ConfigProto()
+        config = context.context().config
         config.allow_soft_placement = allow_soft_placement
-        config.gpu_options.per_process_gpu_memory_fraction = 0.3
       elif not allow_soft_placement and config.allow_soft_placement:
-        config_copy = config_pb2.ConfigProto()
-        config_copy.CopyFrom(config)
+        config_copy = context.context().config
         config = config_copy
         config.allow_soft_placement = False
       # Don't perform optimizations for tests so we don't inadvertently run

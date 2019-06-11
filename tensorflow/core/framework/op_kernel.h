@@ -163,7 +163,6 @@ class OpKernel {
   const string& name() const;              // Same as def().name()
   const string& type_string() const;       // Same as def().op()
   const string& requested_device() const;  // Same as def().device()
-  bool is_internal() const { return is_internal_; }
 
   int num_inputs() const { return input_types_.size(); }
   DataType input_type(int i) const { return input_types_[i]; }
@@ -219,7 +218,6 @@ class OpKernel {
   NameRangeMap input_name_map_;
   NameRangeMap output_name_map_;
   const int graph_def_version_;
-  const bool is_internal_;  // True if this is an internal operation
   bool expensive_;
   std::atomic_uint_fast64_t cost_estimate_;
 
@@ -533,11 +531,32 @@ class OpOutputList {
 // a mutex to prevent concurrent access to the tensor.
 struct TensorValue {
   TensorValue() : mutex_if_ref(nullptr), tensor(nullptr) {}
-  TensorValue(Tensor* t)  // NOLINT(runtime/explicit)
-      : mutex_if_ref(nullptr), tensor(t) {}
+  explicit TensorValue(Tensor* t) : mutex_if_ref(nullptr), tensor(t) {}
   TensorValue(mutex* mu, Tensor* t) : mutex_if_ref(mu), tensor(t) {}
   Tensor* operator->() const { return tensor; }
   bool is_ref() const { return mutex_if_ref != nullptr; }
+
+  // Return the dtype of the Tensor. For references, return the underlying type.
+  DataType dtype() const {
+    if (is_ref()) {
+      return MakeRefType(tensor->dtype());
+    } else {
+      return tensor->dtype();
+    }
+  }
+
+  // Return the dtype of the Tensor. For references, return the underlying type.
+  // This variation on the dtype() acquires the lock for references.
+  //
+  // TODO(b/133843385): Disallow dtype modifications
+  DataType dtype_safe() const {
+    if (is_ref()) {
+      tf_shared_lock ml(*mutex_if_ref);
+      return MakeRefType(tensor->dtype());
+    } else {
+      return tensor->dtype();
+    }
+  }
 
   mutex* mutex_if_ref;  // nullptr if not a ref, != nullptr if a ref
   Tensor* tensor;
@@ -1277,6 +1296,10 @@ class OpKernelContext {
                          Tensor* out_tensor, AllocatorAttributes allocator_attr,
                          const AllocationAttributes& allocation_attr);
 
+  // Initialize the allocated_scope_ids_ set the first time this method is
+  // called.
+  void maybe_initialize_scope_id_set();
+
   // This is called by PersistentTensor::AccessTensor whenever the
   // wrapped tensor is retrieved, to ensure the runtime knows that the
   // Tensor is being accessed within an Op. This is necessary for
@@ -1292,8 +1315,9 @@ class OpKernelContext {
   gtl::InlinedVector<WrappedAllocator, 4> wrapped_allocators_ GUARDED_BY(mu_);
   gtl::InlinedVector<TensorValue, 4> outputs_;
 
-  // Keep track of calls to ScopeAllocator.
-  std::unordered_set<int32> allocated_scope_ids_;
+  // Keep track of calls to ScopedAllocator.
+  // TODO(ayushd): change to absl::flat_hash_set.
+  std::unique_ptr<std::unordered_set<int32>> allocated_scope_ids_;
 
   // Constructed only if <params->record_tensor_accesses>.
   ManualConstructor<UniqueTensorReferences> referenced_tensors_ GUARDED_BY(mu_);
@@ -1544,11 +1568,7 @@ inline DataType OpKernelContext::input_dtype(int index) const {
   DCHECK_GE(index, 0);
   DCHECK_LT(index, num_inputs());
   const TensorValue& value((*params_->inputs)[index]);
-  if (value.is_ref()) {
-    return MakeRefType(value->dtype());
-  } else {
-    return value->dtype();
-  }
+  return value.dtype();
 }
 
 inline MemoryType OpKernelContext::input_memory_type(int index) const {
