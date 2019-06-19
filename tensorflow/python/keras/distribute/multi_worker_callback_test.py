@@ -29,9 +29,9 @@ from tensorflow.python import keras
 from tensorflow.python.distribute import collective_all_reduce_strategy as collective_strategy
 from tensorflow.python.distribute import combinations
 from tensorflow.python.distribute import distribute_coordinator as dc
-from tensorflow.python.distribute import distribute_coordinator_context as dc_context
 from tensorflow.python.distribute import mirrored_strategy
 from tensorflow.python.distribute import multi_worker_test_base as test_base
+from tensorflow.python.distribute import multi_worker_util
 from tensorflow.python.keras import backend as K
 from tensorflow.python.keras import callbacks
 from tensorflow.python.keras import testing_utils
@@ -61,7 +61,8 @@ def generate_callback_test_function(custom_callable):
     num_workers = 2
     num_epoch = 2
 
-    cluster_spec = test_base.create_cluster_spec(num_workers=num_workers)
+    cluster_spec = test_base.create_cluster_spec(
+        num_workers=num_workers, test_obj=self)
     self._barrier = dc._Barrier(2)
 
     def _independent_worker_fn(*args, **kwargs):  # pylint: disable=unused-argument
@@ -129,7 +130,7 @@ class KerasMultiWorkerCallbackTest(test_base.IndependentWorkerTestBase,
         self.filtered_correctly = True
 
       def on_train_begin(self, logs):
-        if not dc_context.get_current_worker_context().is_chief:
+        if not multi_worker_util.is_chief():
           # Non-chief workers shouldn't run this callback.
           self.filtered_correctly = False
 
@@ -232,7 +233,7 @@ class KerasMultiWorkerCallbackTest(test_base.IndependentWorkerTestBase,
       test_obj.assertAllClose(
           history_after_one_more_epoch.history,
           history_after_loading_weight_and_one_more_epoch.history,
-          rtol=6e-6)
+          rtol=5e-5)
 
     # Verify the temp files are indeed removed (no trace left behind).
     for filepath in filepaths:
@@ -266,7 +267,7 @@ class KerasMultiWorkerCallbackTest(test_base.IndependentWorkerTestBase,
     test_obj.assertAllClose(
         history_after_one_more_epoch.history,
         history_after_model_restoring_and_one_more_epoch.history,
-        rtol=5e-6)
+        rtol=5e-5)
 
     history_one_more_epoch_without_model_restoring = model.fit(
         x=train_ds, epochs=1, steps_per_epoch=steps)
@@ -274,7 +275,8 @@ class KerasMultiWorkerCallbackTest(test_base.IndependentWorkerTestBase,
     # Ensuring training for another epoch gives different result.
     test_obj.assertNotAllClose(
         history_after_model_restoring_and_one_more_epoch.history,
-        history_one_more_epoch_without_model_restoring.history)
+        history_one_more_epoch_without_model_restoring.history,
+        rtol=5e-5)
 
   @staticmethod
   def callableForTestUnmatchedModelFile(model, test_obj, train_ds, num_epoch,
