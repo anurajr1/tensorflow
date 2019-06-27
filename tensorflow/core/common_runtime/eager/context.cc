@@ -19,6 +19,7 @@ limitations under the License.
 
 // clang-format off
 // Required for IS_MOBILE_PLATFORM
+#include "tensorflow/core/common_runtime/function.h"
 #include "tensorflow/core/lib/gtl/map_util.h"
 #include "tensorflow/core/platform/platform.h"
 // clang-format on
@@ -74,10 +75,11 @@ EagerContext::EagerContext(
       rendezvous_(rendezvous),
       rendezvous_creator_(std::move(rendezvous_creator)),
       thread_pool_(NewThreadPoolFromSessionOptions(opts)),
+      custom_kernel_creator_(custom_kernel_creator),
       pflr_(new ProcessFunctionLibraryRuntime(
           device_mgr, opts.env, TF_GRAPH_DEF_VERSION, &func_lib_def_,
           opts.config.graph_options().optimizer_options(), thread_pool_.get(),
-          cluster_flr, custom_kernel_creator)),
+          cluster_flr, custom_kernel_creator_)),
       log_device_placement_(opts.config.log_device_placement()),
       num_active_steps_(0),
       async_default_(async),
@@ -646,7 +648,7 @@ Status EagerContext::InitializeRemote(
   local_device_manager_ = nullptr;
   pflr_.reset(new ProcessFunctionLibraryRuntime(
       local_unowned_device_manager_, env_, TF_GRAPH_DEF_VERSION, &func_lib_def_,
-      {}, thread_pool_.get(), cluster_flr));
+      {}, thread_pool_.get(), cluster_flr, custom_kernel_creator_));
 
   devices_ = local_unowned_device_manager_->ListDevices();
   devices_map_.clear();

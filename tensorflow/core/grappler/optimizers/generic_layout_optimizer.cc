@@ -21,7 +21,6 @@ limitations under the License.
 #include "tensorflow/core/framework/op_kernel.h"
 #include "tensorflow/core/grappler/clusters/cluster.h"
 #include "tensorflow/core/grappler/grappler_item.h"
-#include "tensorflow/core/grappler/optimizers/custom_graph_optimizer_registry.h"
 #include "tensorflow/core/grappler/optimizers/generic_layout_optimizer_transposer.h"
 #include "tensorflow/core/grappler/optimizers/generic_layout_optimizer_transposer_factory.h"
 #include "tensorflow/core/lib/core/errors.h"
@@ -30,6 +29,17 @@ namespace tensorflow {
 namespace grappler {
 
 namespace {
+
+inline int GetNumGPUs(const Cluster& cluster) {
+  auto devices = cluster.GetDevices();
+  int num_gpus = 0;
+  for (const auto& device : devices) {
+    if (device.second.type() == "GPU") {
+      num_gpus++;
+    }
+  }
+  return num_gpus;
+}
 
 Status ExpandLayoutSensitiveOp(TransposeContext* context,
                                TransposerFactory* transposer_factory) {
@@ -148,20 +158,20 @@ Status EraseCancellableNodes(TransposeContext* context) {
       continue;
     }
     const auto& regular_fanin_0 = node->GetRegularFanin(0);
-    auto* input_transpose = regular_fanin_0.node_view();
-    if (!IsCancellableNodePair(*node, *input_transpose)) {
+    auto* fanin_node = regular_fanin_0.node_view();
+    if (!IsCancellableNodePair(*node, *fanin_node)) {
       continue;
     }
     // Skip transpose not added by optimizer.
     if ((node->GetRegularFanouts().size() != 1 &&
          node->NumControlledFanouts() != 0) ||
-        (input_transpose->GetRegularFanouts().size() != 1 &&
-         input_transpose->NumControlledFanouts() != 0)) {
+        (fanin_node->GetRegularFanouts().size() != 1 &&
+         fanin_node->NumControlledFanouts() != 0)) {
       VLOG(1) << "There is always only a single output for a Transpose "
                  "node, due to the way it is added by Layout Optimizer.";
       continue;
     }
-    const auto& fanin_to_forward = input_transpose->GetRegularFanin(0);
+    const auto& fanin_to_forward = fanin_node->GetRegularFanin(0);
     TensorId fanin_id_to_forward(fanin_to_forward.node_view()->GetName(),
                                  fanin_to_forward.index());
     for (const auto& regular_fanout : node->GetRegularFanout(0)) {
@@ -170,7 +180,13 @@ Status EraseCancellableNodes(TransposeContext* context) {
                                         fanin_id_to_forward);
     }
     mutation->RemoveNode(node);
-    mutation->RemoveNode(input_transpose);
+    if (node->NumRegularFanins() > 1) {
+      mutation->RemoveNode(node->GetRegularFanin(1).node_view());
+    }
+    mutation->RemoveNode(fanin_node);
+    if (fanin_node->NumRegularFanins() > 1) {
+      mutation->RemoveNode(fanin_node->GetRegularFanin(1).node_view());
+    }
   }
   return mutation->Apply();
 }
@@ -180,9 +196,10 @@ Status EraseOutputShapeAttrs(TransposeContext* context) {
   utils::Mutation* mutation = graph_view->GetMutationBuilder();
   const int num_nodes = graph_view->NumNodes();
   for (int i = 0; i < num_nodes; ++i) {
-    mutation->RemoveNodeAttr(graph_view->GetNode(i), "_output_shapes");
+    mutation->RemoveNodeAttr(graph_view->GetNode(i), kAttrOutputShape);
+    TF_RETURN_IF_ERROR(mutation->Apply());
   }
-  return mutation->Apply();
+  return Status::OK();
 }
 
 }  // namespace
@@ -190,15 +207,23 @@ Status EraseOutputShapeAttrs(TransposeContext* context) {
 Status GenericLayoutOptimizer::Optimize(Cluster* cluster,
                                         const GrapplerItem& item,
                                         GraphDef* output) {
-  // If optimizer returns early with error, output will be the input graph.
-  *output = item.graph;
+  if (cluster == nullptr) {
+    LOG(WARNING)
+        << "generic layout optimizer was called with cluster == nullptr";
+    return errors::Aborted("cluster == nullptr.");
+  }
+  if (GetNumGPUs(*cluster) < 1) {
+    return errors::Aborted(
+        "No GPUs found: GenericLayoutOptimizer is currently only tuned for "
+        "GPU.");
+  }
+
   TransposeContext context;
-  TF_RETURN_IF_ERROR(
-      TransposeContext::InitializeTransposeContext(item, cluster, &context));
+  TF_RETURN_IF_ERROR(TransposeContext::InitializeTransposeContext(
+      item, cluster, src_format_, dst_format_, target_device_, &context));
   TransposerFactory transposer_factory;
   TF_RETURN_IF_ERROR(ExpandLayoutSensitiveOp(&context, &transposer_factory));
   TF_RETURN_IF_ERROR(ExpandLayoutAgnosticOp(&context, &transposer_factory));
-  // TODO(lyandy): Merge non cancellable nodes.
   TF_RETURN_IF_ERROR(EraseCancellableNodes(&context));
   TF_RETURN_IF_ERROR(EraseOutputShapeAttrs(&context));
 
@@ -212,32 +237,6 @@ void GenericLayoutOptimizer::Feedback(Cluster* cluster,
                                       double result) {
   // Takes no feedback.
 }
-
-string GetAndValidateParameter(const string& parameter,
-                               const AttrValueMap& parameter_map,
-                               const std::set<string>& valid_inputs,
-                               std::vector<string>* validation_errors,
-                               std::vector<string>* missing_parameters) {
-  if (parameter_map.find(parameter) != parameter_map.end()) {
-    string input = str_util::Uppercase(parameter_map.at(parameter).s());
-    if (valid_inputs.find(input) != valid_inputs.end()) {
-      return input;
-    }
-    validation_errors->push_back(absl::StrCat(
-        "Invalid input ", input, " for parameter ", parameter,
-        ", must be one of [", str_util::Join(valid_inputs, ", "), "]."));
-  } else {
-    missing_parameters->push_back(parameter);
-  }
-  return "";
-}
-
-Status GenericLayoutOptimizer::Init(
-    const RewriterConfig_CustomGraphOptimizer* config) {
-  return Status::OK();
-}
-
-REGISTER_GRAPH_OPTIMIZER_AS(GenericLayoutOptimizer, "GenericLayoutOptimizer");
 
 }  // end namespace grappler
 }  // end namespace tensorflow

@@ -191,19 +191,15 @@ static port::StatusOr<RedzoneCheckStatus> CheckRedzoneHost(
   for (i = 0; i + 7 < size; i += sizeof(uint64)) {
     uint64 rz_value = *reinterpret_cast<uint64*>(&redzone_data[i]);
     if (rz_value != pattern64) {
-      return RedzoneCheckStatus::WithFailureMsg(absl::StrFormat(
-          "Redzone mismatch in %s redzone of buffer %p at offset %d; "
-          "expected %08x but was %08x.",
-          name, user_allocation.opaque(), i, pattern64, rz_value));
+      return RedzoneCheckStatus(name, user_allocation.opaque(), i, pattern64,
+                                rz_value);
     }
   }
   for (; i < size; ++i) {
     uint8 rz_value = redzone_data[i];
     if (rz_value != redzone_pattern) {
-      return RedzoneCheckStatus::WithFailureMsg(absl::StrFormat(
-          "Redzone mismatch in %s redzone of buffer %p at offset %d; "
-          "expected %08x but was %08x.",
-          name, user_allocation.opaque(), i, redzone_pattern, rz_value));
+      return RedzoneCheckStatus(name, user_allocation.opaque(), i,
+                                redzone_pattern, rz_value);
     }
   }
   return RedzoneCheckStatus::OK();
@@ -310,8 +306,12 @@ port::StatusOr<RedzoneCheckStatus> RedzoneAllocator::CheckRedzones(
   if (compiled_ptx_or.ok()) {
     compiled_ptx = compiled_ptx_or.ValueOrDie();
   } else {
-    LOG(WARNING) << compiled_ptx_or.status().ToString()
-                 << "\nRelying on driver to perform ptx compilation";
+    static std::once_flag ptxas_not_found_logged;
+    std::call_once(ptxas_not_found_logged, [&]() {
+      LOG(WARNING) << compiled_ptx_or.status().ToString()
+                   << "\nRelying on driver to perform ptx compilation. "
+                   << "This message will be only logged once.";
+    });
   }
 
   ScopedDeviceMemory<uint64> out_param =
@@ -336,6 +336,13 @@ port::StatusOr<RedzoneCheckStatus> RedzoneAllocator::CheckRedzones(
   }
 
   return RedzoneCheckStatus::OK();
+}
+
+std::string RedzoneCheckStatus::RedzoneFailureMsg() const {
+  return absl::StrFormat(
+      "Redzone mismatch in %s redzone of buffer %p at offset %d; "
+      "expected %08x but was %08x.",
+      buffer_name, user_buffer_address, offset, expected_value, actual_value);
 }
 
 }  // namespace cuda

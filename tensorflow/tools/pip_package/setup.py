@@ -47,7 +47,7 @@ DOCLINES = __doc__.split('\n')
 # result for pip.
 # Also update tensorflow/tensorflow.bzl and
 # tensorflow/core/public/version.h
-_VERSION = '1.13.1'
+_VERSION = '1.14.0'
 
 REQUIRED_PACKAGES = [
     'absl-py >= 0.7.0',
@@ -245,8 +245,8 @@ else:
 headers = (
     list(find_files('*.h', 'tensorflow_core/core')) +
     list(find_files('*.h', 'tensorflow_core/stream_executor')) +
-    list(find_files('*.h', 'google/protobuf_archive/src')) +
-    list(find_files('*.inc', 'google/protobuf_archive/src')) +
+    list(find_files('*.h', 'google/com_google_protobuf/src')) +
+    list(find_files('*.inc', 'google/com_google_protobuf/src')) +
     list(find_files('*', 'third_party/eigen3')) + list(
         find_files('*.h', 'tensorflow_core/include/external/com_google_absl')) +
     list(

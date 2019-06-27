@@ -16,18 +16,18 @@ limitations under the License.
 #ifndef TENSORFLOW_CORE_GRAPPLER_OPTIMIZERS_GENERIC_LAYOUT_OPTIMIZER_H_
 #define TENSORFLOW_CORE_GRAPPLER_OPTIMIZERS_GENERIC_LAYOUT_OPTIMIZER_H_
 
-#include "tensorflow/core/grappler/optimizers/custom_graph_optimizer.h"
+#include "tensorflow/core/grappler/optimizers/graph_optimizer.h"
 
 namespace tensorflow {
 namespace grappler {
 
 // Optimize the data layout for convolutional models.
-class GenericLayoutOptimizer : public CustomGraphOptimizer {
+class GenericLayoutOptimizer : public GraphOptimizer {
  public:
-  GenericLayoutOptimizer() : CustomGraphOptimizer() {}
+  GenericLayoutOptimizer() : GraphOptimizer() {}
   ~GenericLayoutOptimizer() override {}
 
-  string name() const override { return "generic_layout"; };
+  string name() const override { return "layout"; };
 
   Status Optimize(Cluster* cluster, const GrapplerItem& item,
                   GraphDef* output) override;
@@ -35,7 +35,10 @@ class GenericLayoutOptimizer : public CustomGraphOptimizer {
   void Feedback(Cluster* cluster, const GrapplerItem& item,
                 const GraphDef& optimize_output, double result) override;
 
-  Status Init(const RewriterConfig_CustomGraphOptimizer* config) final;
+ private:
+  string target_device_ = "GPU";
+  string src_format_ = "NHWC";
+  string dst_format_ = "NCHW";
 };
 
 }  // namespace grappler

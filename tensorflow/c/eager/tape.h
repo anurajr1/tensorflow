@@ -1001,12 +1001,15 @@ Status ForwardAccumulator<Gradient, BackwardFunction, TapeTensor>::Accumulate(
 template <typename Gradient, typename BackwardFunction, typename TapeTensor>
 void ForwardAccumulator<Gradient, BackwardFunction, TapeTensor>::Watch(
     int64 tensor_id, Gradient* tangent) {
-  auto existing = accumulated_gradients_.find(tensor_id);
+  typename std::unordered_map<int64, Gradient*>::iterator existing =
+      accumulated_gradients_.find(tensor_id);
   vspace_.MarkAsResult(tangent);
   if (existing == accumulated_gradients_.end()) {
     accumulated_gradients_.emplace(tensor_id, tangent);
   } else {
-    std::array<Gradient*, 2> to_aggregate({tangent, existing->second});
+    std::array<Gradient*, 2> to_aggregate;
+    to_aggregate[0] = tangent;
+    to_aggregate[1] = existing->second;
     // AggregateGradients steals a reference to each of its arguments. We
     // MarkAsResult on `tangent` above so we don't steal a reference to it.
     existing->second = vspace_.AggregateGradients(to_aggregate);

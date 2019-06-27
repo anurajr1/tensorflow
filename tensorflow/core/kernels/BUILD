@@ -241,9 +241,9 @@ tf_kernel_library(
         "concat_lib.h",
         "concat_lib_cpu.h",
     ],
-    gpu_copts = [
-        "-Xclang-only=-Wno-pass-failed",  # clang misses #pragma loop optimizations
-    ],
+    gpu_copts = if_not_windows([
+        "-Wno-pass-failed",  # clang misses #pragma loop optimizations
+    ]),
     gpu_srcs = [
         "concat_lib_gpu_impl.cu.cc",
         "concat_lib.h",
@@ -271,9 +271,9 @@ cc_library(
 tf_kernel_library(
     name = "conv_2d",
     hdrs = ["conv_2d.h"],
-    gpu_copts = [
-        "-Xclang-only=-Wno-pass-failed",  # clang misses #pragma loop optimizations
-    ],
+    gpu_copts = if_not_windows([
+        "-Wno-pass-failed",  # clang misses #pragma loop optimizations
+    ]),
     gpu_srcs = [
         "conv_2d.h",
         "conv_2d_gpu.h",
@@ -1266,7 +1266,7 @@ tf_kernel_library(
         "transpose_op.cc",
     ],
     hdrs = ["transpose_op.h"],
-    deps = ARRAY_DEPS + if_mkl([":mkl_transpose_op"]),
+    deps = ARRAY_DEPS,
 )
 
 tf_kernel_library(
@@ -1299,6 +1299,9 @@ tf_kernel_library(
         "where_op_gpu_impl_3.cu.cc",
         "where_op_gpu_impl_4.cu.cc",
         "where_op_gpu_impl_5.cu.cc",
+        "where_op_gpu_impl_6.cu.cc",
+        "where_op_gpu_impl_7.cu.cc",
+        "where_op_gpu_impl_8.cu.cc",
     ],
     deps = if_cuda([
         ":cuda_solvers",
@@ -3631,15 +3634,19 @@ tf_kernel_library(
 
 tf_kernel_library(
     name = "batch_matmul_op",
-    srcs = if_mkl_ml([
-        "mkl_batch_matmul_op.cc",
-    ]),
     # <prefix>*impl.h are excluded by default from the CPU build, add explicitly.
     hdrs = ["batch_matmul_op_impl.h"],
     prefix = "batch_matmul_op",
     deps = MATH_DEPS + [":eigen_contraction_kernel"] + if_mkl_ml([
         "//third_party/mkl:intel_binary_blob",
     ]),
+)
+
+tf_mkl_kernel_library(
+    name = "mkl_batch_matmul_op",
+    srcs = ["mkl_batch_matmul_op.cc"],
+    hdrs = ["batch_matmul_op_impl.h"],
+    deps = MATH_DEPS + mkl_deps(),
 )
 
 tf_kernel_library(
@@ -3705,9 +3712,7 @@ tf_kernel_library(
     srcs = [
         "matmul_op.cc",
         "matmul_op_fused.cc",
-    ] + if_mkl([
-        "mkl_matmul_op.cc",
-    ]),
+    ],
     hdrs = ["matmul_op.h"],
     defines = select({
         ":xsmm": [
@@ -3726,6 +3731,12 @@ tf_kernel_library(
     }) + mkl_deps() + if_cuda([
         "//tensorflow/core/platform/default/build_config:cublas_plugin",
     ]),
+)
+
+tf_mkl_kernel_library(
+    name = "mkl_matmul_op",
+    srcs = ["mkl_matmul_op.cc"],
+    deps = MATH_DEPS + mkl_deps(),
 )
 
 tf_kernel_library(
@@ -4180,9 +4191,9 @@ tf_kernel_library(
     name = "depthwise_conv_op",
     srcs = ["depthwise_conv_op.cc"],
     hdrs = ["depthwise_conv_op.h"],
-    gpu_copts = [
-        "-Xclang-only=-Wno-pass-failed",  # clang misses #pragma loop optimizations
-    ],
+    gpu_copts = if_not_windows([
+        "-Wno-pass-failed",  # clang misses #pragma loop optimizations
+    ]),
     gpu_srcs = [
         "depthwise_conv_op.h",
         "depthwise_conv_op_gpu.h",
@@ -5191,9 +5202,9 @@ tf_kernel_library(
         "scatter_nd_op.h",
         "scatter_nd_op_cpu_impl.h",
     ],
-    gpu_copts = [
-        "-Xclang-only=-Wno-pass-failed",  # clang misses #pragma loop optimizations
-    ],
+    gpu_copts = if_not_windows([
+        "-Wno-pass-failed",  # clang misses #pragma loop optimizations
+    ]),
     gpu_srcs = [
         "scatter_nd_op.h",
         "scatter_nd_op_gpu.cu.cc",
@@ -5550,9 +5561,9 @@ tf_cuda_cc_test(
 
 tf_kernel_library(
     name = "parameterized_truncated_normal_op",
-    gpu_copts = [
-        "-Xclang-only=-Wno-pass-failed",  # clang misses #pragma loop optimizations
-    ],
+    gpu_copts = if_not_windows([
+        "-Wno-pass-failed",  # clang misses #pragma loop optimizations
+    ]),
     prefix = "parameterized_truncated_normal_op",
     deps = [
         "//tensorflow/core:core_cpu",
@@ -6207,6 +6218,8 @@ filegroup(
         "encode_wav_op.cc",
         "eigen_contraction_kernel.cc",
         "eigen_contraction_kernel.h",
+        "einsum_op.cc",
+        "einsum_op.h",
         "fake_quant_ops.cc",
         "fifo_queue.cc",
         "fifo_queue_op.cc",
@@ -6479,9 +6492,9 @@ cc_library(
         "//tensorflow/core:protos_all_cc_impl",
         "//third_party/eigen3",
         "//third_party/fft2d:fft2d_headers",
+        "@com_google_protobuf//:protobuf",
         "@fft2d",
         "@gemmlowp",
-        "@protobuf_archive//:protobuf",
     ],
     alwayslink = 1,
 )
@@ -7728,7 +7741,7 @@ tf_mkl_kernel_library(
         "mkl_transpose_op.cc",
     ],
     hdrs = ["transpose_op.h"],
-    deps = ARRAY_DEPS + mkl_deps(),
+    deps = ARRAY_DEPS + mkl_deps() + [":transpose_op"],
 )
 
 # NOTE(lespeholt): This rule is deprecated, please use:

@@ -173,19 +173,10 @@ cc_library(
     hdrs = ["common.h"],
     copts = tflite_copts(),
     deps = [
+        ":cpu_check",
         ":types",
         "@gemmlowp//:fixedpoint",
-    ] + select({
-        ":haswell": tflite_deps_intel,
-        ":ios_x86_64": tflite_deps_intel,
-        ":k8": tflite_deps_intel,
-        ":x86": tflite_deps_intel,
-        ":x86_64": tflite_deps_intel,
-        ":darwin": tflite_deps_intel,
-        ":darwin_x86_64": tflite_deps_intel,
-        ":freebsd": tflite_deps_intel,
-        "//conditions:default": [],
-    }),
+    ],
 )
 
 cc_library(
@@ -515,6 +506,25 @@ cc_library(
 )
 
 cc_library(
+    name = "sse_tensor_utils",
+    srcs = [
+        "compatibility.h",
+        "optimized/sse_tensor_utils.cc",
+    ],
+    hdrs = [
+        "optimized/sse_tensor_utils.h",
+        "optimized/sse_tensor_utils_impl.h",
+    ],
+    deps = [
+        ":cpu_check",
+        ":neon_tensor_utils",
+        ":portable_tensor_utils",
+        "//tensorflow/lite/c:c_api_internal",
+        "//tensorflow/lite/kernels:op_macros",
+    ],
+)
+
+cc_library(
     name = "kernel_utils",
     srcs = ["kernel_utils.cc"],
     hdrs = ["kernel_utils.h"],
@@ -581,7 +591,7 @@ cc_library(
             ":neon_tensor_utils",
         ],
         ":haswell": [
-            ":neon_tensor_utils",
+            ":sse_tensor_utils",
         ],
         ":ios_armv7": [
             ":neon_tensor_utils",
@@ -590,25 +600,25 @@ cc_library(
             ":neon_tensor_utils",
         ],
         ":ios_x86_64": [
-            ":neon_tensor_utils",
+            ":sse_tensor_utils",
         ],
         ":x86_64": [
-            ":neon_tensor_utils",
+            ":sse_tensor_utils",
         ],
         ":x86": [
-            ":neon_tensor_utils",
+            ":sse_tensor_utils",
         ],
         ":k8": [
-            ":neon_tensor_utils",
+            ":sse_tensor_utils",
         ],
         ":darwin": [
             ":neon_tensor_utils",
         ],
         ":darwin_x86_64": [
-            ":neon_tensor_utils",
+            ":sse_tensor_utils",
         ],
         ":freebsd": [
-            ":neon_tensor_utils",
+            ":sse_tensor_utils",
         ],
         "//conditions:default": [
             ":portable_tensor_utils",
@@ -667,10 +677,11 @@ cc_test(
         "depthwiseconv_quantized_test.cc",
         "optimized/depthwiseconv_uint8_transitional.h",
     ],
+    copts = tflite_copts(),
     shard_count = 2,
     deps = [
-        ":common",
         ":compatibility",
+        ":cpu_check",
         ":optimized_base",
         ":reference_base",
         ":test_util",
@@ -815,17 +826,22 @@ cc_library(
     name = "cpu_check",
     hdrs = [
         "optimized/cpu_check.h",
+        "optimized/neon_check.h",
+        "optimized/sse_check.h",
     ],
     deps = [
         "//tensorflow/lite/kernels:cpu_backend_context",
-    ] + select(
-        {
-            "//tensorflow:android": [
-                "@androidndk//:cpufeatures",
-            ],
-            "//conditions:default": [],
-        },
-    ),
+    ] + select({
+        ":haswell": tflite_deps_intel,
+        ":ios_x86_64": tflite_deps_intel,
+        ":k8": tflite_deps_intel,
+        ":x86": tflite_deps_intel,
+        ":x86_64": tflite_deps_intel,
+        ":darwin": tflite_deps_intel,
+        ":darwin_x86_64": tflite_deps_intel,
+        ":freebsd": tflite_deps_intel,
+        "//conditions:default": [],
+    }),
 )
 
 cc_test(

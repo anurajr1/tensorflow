@@ -63,26 +63,6 @@
 # //tensorflow/tensorflow.bzl) will include the necessary symbols in binary
 # build targets.
 
-package(
-    default_visibility = [
-        ":dependency_whitelist",
-        "//tensorflow:internal",
-        "//tensorflow_models:__subpackages__",
-    ],
-    licenses = ["notice"],  # Apache 2.0
-)
-
-package_group(
-    name = "dependency_whitelist",
-    packages = [
-        "//learning/freud/topic_models/tensorflow/...",
-        "//quality/webanswers/brain/tokenization/custom_tf_ops/kernels/...",
-    ],
-)
-
-# Export the BUILD file so automated tooling can check licenses
-exports_files(["BUILD"])
-
 load(
     "//tensorflow:tensorflow.bzl",
     "cc_header_only_library",
@@ -93,10 +73,14 @@ load(
     "if_mobile",
     "if_not_windows",
     "if_windows",
+    "tf_android_core_proto_headers",
+    "tf_android_core_proto_sources",
     "tf_cc_test",
+    "tf_cc_test_mkl",
     "tf_cc_tests",
     "tf_copts",
     "tf_cuda_library",
+    "tf_cuda_only_cc_test",
     "tf_features_nomodules_if_android",
     "tf_features_nomodules_if_emscripten",
     "tf_gen_op_libs",
@@ -106,14 +90,17 @@ load(
     "tf_opts_nortti_if_emscripten",
     "transitive_hdrs",
 )
-load("//tensorflow:tensorflow.bzl", "tf_cc_test_mkl")
+load("//tensorflow:tensorflow.bzl", "if_nccl")
+load("//tensorflow:tensorflow.bzl", "tensorflow_opensource_extra_deps")
+
+# load("//tensorflow:tensorflow.bzl", "tf_android_full_lite_protos")
 load("//tensorflow:tensorflow.bzl", "tf_cc_test_gpu")
 load("//tensorflow:tensorflow.bzl", "tf_cc_tests_gpu")
 load("//tensorflow:tensorflow.bzl", "tf_cuda_cc_test")
+
+# Placeholder: load("//tensorflow:tensorflow.bzl", "tf_portable_proto_lib")
+load("//tensorflow:tensorflow.bzl", "tf_portable_proto_library")
 load("//tensorflow:tensorflow.bzl", "tf_version_info_genrule")
-load("//tensorflow:tensorflow.bzl", "if_nccl")
-load("//tensorflow:tensorflow.bzl", "tensorflow_opensource_extra_deps")
-load("//tensorflow:tensorflow.bzl", "tf_cuda_only_cc_test")
 
 # For platform specific build config
 load(
@@ -177,6 +164,29 @@ load(
     "if_mkl",
     "mkl_deps",
 )
+# Placeholder for Google-internal load statements.
+
+package(
+    default_visibility = [
+        ":dependency_whitelist",
+        "//tensorflow:internal",
+        "//tensorflow_models:__subpackages__",
+    ],
+    licenses = ["notice"],  # Apache 2.0
+)
+
+package_group(
+    name = "dependency_whitelist",
+    packages = [
+        "//learning/freud/topic_models/tensorflow/...",
+        "//quality/webanswers/brain/tokenization/custom_tf_ops/kernels/...",
+    ],
+)
+
+# Export the BUILD file so automated tooling can check licenses
+exports_files(["BUILD"])
+
+package_group(name = "experimental_access")
 
 exports_files(["ops/ops.pbtxt"])
 
@@ -455,7 +465,7 @@ cc_library(
         ":platform_base",
         ":platform_port",
         "//tensorflow/core/platform/default/build_config:protobuf",
-        "@protobuf_archive//:protobuf",
+        "@com_google_protobuf//:protobuf",
     ],
 )
 
@@ -661,6 +671,7 @@ cc_library(
         "//tensorflow/core/platform/default/build_config:other",
         "//tensorflow/core/platform/default/build_config:platformlib",
         "//tensorflow/core/platform/default/build_config:port",
+        "@com_google_absl//absl/time",
     ],
 )
 
@@ -784,6 +795,7 @@ cc_library(
         "lib/core/threadpool_options.h",
     ],
     visibility = [
+        ":experimental_access",
         "//tensorflow/cc:__pkg__",
     ],
     deps = [
@@ -1436,7 +1448,6 @@ cc_library(
         ":training_ops_op_lib",
         ":user_ops_op_lib",
         ":word2vec_ops",
-        "//tensorflow/c/kernels:bitcast_op_lib",
     ] + if_mkl([
         ":mkl_array_ops_op_lib",
         ":mkl_nn_ops_op_lib",
@@ -1456,7 +1467,6 @@ cc_library(
         ":array_ops_op_lib",
         ":framework",
         ":lib",
-        "//tensorflow/c/kernels:bitcast_op_lib",
     ],
     alwayslink = 1,
 )
@@ -1631,6 +1641,8 @@ cc_library(
         "//tensorflow/core/kernels:mkl_slice_op",
         "//tensorflow/core/kernels:mkl_softmax_op",
         "//tensorflow/core/kernels:mkl_transpose_op",
+        "//tensorflow/core/kernels:mkl_batch_matmul_op",
+        "//tensorflow/core/kernels:mkl_matmul_op",
         "//tensorflow/core/kernels:mkl_tfconv_op",
     ]) + if_cuda([
         "//tensorflow/core/grappler/optimizers:gpu_swapping_kernels",
@@ -1774,13 +1786,6 @@ cc_library(
 
 # -----------------------------------------------------------------------------
 # Public Android targets
-
-# Android-specific BUILD targets
-load(
-    "//tensorflow:tensorflow.bzl",
-    "tf_android_core_proto_headers",
-    "tf_android_core_proto_sources",
-)
 
 # List of protos we want on android
 filegroup(
@@ -1928,10 +1933,10 @@ cc_library(
         ":protos_all_cc_impl",
         ":stats_calculator_portable",
         "//third_party/eigen3",
+        "@com_google_protobuf//:protobuf",
         "@double_conversion//:double-conversion",
         "@farmhash_archive//:farmhash",
         "@nsync//:nsync_cpp",
-        "@protobuf_archive//:protobuf",
     ],
     alwayslink = 1,
 )
@@ -1953,10 +1958,10 @@ cc_library(
         ":protos_all_cc_impl",
         ":stats_calculator_portable",
         "//third_party/eigen3",
+        "@com_google_protobuf//:protobuf",
         "@double_conversion//:double-conversion",
         "@farmhash_archive//:farmhash",
         "@nsync//:nsync_cpp",
-        "@protobuf_archive//:protobuf",
     ],
     alwayslink = 1,
 )
@@ -2012,9 +2017,9 @@ cc_library(
         ":protos_all_cc_impl",
         "//third_party/eigen3",
         "//third_party/fft2d:fft2d_headers",
+        "@com_google_protobuf//:protobuf",
         "@fft2d",
         "@gemmlowp",
-        "@protobuf_archive//:protobuf",
     ],
     alwayslink = 1,
 )
@@ -2029,10 +2034,10 @@ cc_library(
         ":protos_all_cc_impl",
         ":stats_calculator_portable",
         "//third_party/eigen3",
+        "@com_google_protobuf//:protobuf",
         "@double_conversion//:double-conversion",
         "@farmhash_archive//:farmhash",
         "@nsync//:nsync_cpp",
-        "@protobuf_archive//:protobuf",
     ],
     alwayslink = 1,
 )
@@ -2071,7 +2076,7 @@ cc_library(
         ":protos_all_cc_impl",
         "//tensorflow/core/kernels:android_tensorflow_kernels",
         "//third_party/eigen3",
-        "@protobuf_archive//:protobuf",
+        "@com_google_protobuf//:protobuf",
     ],
     alwayslink = 1,
 )
@@ -2495,7 +2500,6 @@ cc_library(
             "lib/**/*.cc",
             "platform/*.cc",
             "platform/profile_utils/**/*.cc",
-            "framework/resource_handle.cc",
             "util/env_var.cc",
         ],
         exclude = [
@@ -2549,7 +2553,7 @@ cc_library(
                "@snappy",
                "@zlib_archive//:zlib",
                "@double_conversion//:double-conversion",
-               "@protobuf_archive//:protobuf",
+               "@com_google_protobuf//:protobuf",
            ] + tf_protos_all_impl() + tf_protos_grappler_impl() +
            tf_additional_numa_deps(),
 )
@@ -2878,10 +2882,10 @@ tf_cuda_library(
     ] + if_static(
         extra_deps = [
             ":framework_internal_impl",
-            "@protobuf_archive//:protobuf",
+            "@com_google_protobuf//:protobuf",
         ],
         otherwise = [
-            "@protobuf_archive//:protobuf_headers",
+            "@com_google_protobuf//:protobuf_headers",
         ],
     ),
     alwayslink = 1,
@@ -2940,7 +2944,6 @@ tf_cuda_library(
             "framework/fake_input.*",
             "framework/op_gen_lib.*",
             "framework/reader_base.*",
-            "framework/resource_handle.cc",
             "util/memmapped_file_system.*",
             "util/memmapped_file_system_writer.*",
             "util/stats_calculator.*",
@@ -2985,8 +2988,8 @@ tf_cuda_library(
         "//tensorflow/core/profiler/lib:traceme",
         "//third_party/eigen3",
     ] + if_static(
-        extra_deps = ["@protobuf_archive//:protobuf"],
-        otherwise = ["@protobuf_archive//:protobuf_headers"],
+        extra_deps = ["@com_google_protobuf//:protobuf"],
+        otherwise = ["@com_google_protobuf//:protobuf_headers"],
     ) + mkl_deps(),
     alwayslink = 1,
 )
@@ -3139,20 +3142,6 @@ CORE_CPU_BASE_HDRS = GRAPH_HDRS + [
 
 tf_cuda_library(
     name = "core_cpu_base",
-    hdrs = CORE_CPU_BASE_HDRS + ["public/session.h"],
-    copts = tf_copts(),
-    deps = [":core_cpu_base_no_ops"] + if_static([
-        ":function_ops_op_lib",
-        ":functional_grad",
-        ":functional_ops_op_lib",
-        "//tensorflow/core/kernels:bounds_check",
-        "//tensorflow/core/kernels:required",
-    ]),
-    alwayslink = 1,
-)
-
-tf_cuda_library(
-    name = "core_cpu_base_no_ops",
     srcs = [
         "common_runtime/eval_const_tensor.cc",
         "common_runtime/scoped_allocator.cc",
@@ -3161,10 +3150,11 @@ tf_cuda_library(
         "common_runtime/graph_optimizer.h",
         "graph/graph_constructor.cc",  # Depends on common_runtime.
         "graph/graph_def_builder_util.cc",  # Depends on common_runtime.
+        "public/session.h",
         "public/session_options.h",
         "public/version.h",
     ] + CORE_CPU_BASE_HDRS,
-    hdrs = CORE_CPU_BASE_HDRS + ["public/session.h"],
+    hdrs = CORE_CPU_BASE_HDRS,
     copts = tf_copts(),
     deps = [
         ":graph",
@@ -3177,8 +3167,14 @@ tf_cuda_library(
         "@com_google_absl//absl/container:flat_hash_set",
         "//third_party/eigen3",
     ] + if_static([
+        ":function_ops_op_lib",
+        ":functional_grad",
+        ":functional_ops_op_lib",
         "@com_google_absl//absl/algorithm:container",
+        "//tensorflow/core/kernels:bounds_check",
+        "//tensorflow/core/kernels:required",
     ]),
+    alwayslink = 1,
 )
 
 CORE_CPU_LIB_HEADERS = CORE_CPU_BASE_HDRS + [
@@ -3345,16 +3341,6 @@ tf_cuda_library(
 )
 
 tf_cuda_library(
-    name = "core_cpu_lib_no_ops",
-    hdrs = CORE_CPU_LIB_HEADERS,
-    deps = [
-        ":core_cpu_base_no_ops",
-        ":proto_text",
-        "//tensorflow/core/grappler:grappler_item",
-    ] + tf_protos_all() + tf_protos_grappler(),
-)
-
-tf_cuda_library(
     name = "core_cpu_internal",
     srcs = [
         "common_runtime/graph_execution_state.cc",
@@ -3369,6 +3355,7 @@ tf_cuda_library(
         ":lib",
         ":proto_text",
         ":protos_all_cc",
+        "@com_google_absl//absl/memory",
         "@com_google_absl//absl/strings",
         "//tensorflow/core/grappler:grappler_item",
         "//tensorflow/core/grappler/clusters:utils",
@@ -4458,6 +4445,7 @@ tf_cc_test_mkl(
         "//third_party/eigen3",
     ] + if_mkl([
         "//tensorflow/core/kernels:mkl_aggregate_ops",
+        "//tensorflow/core/kernels:mkl_batch_matmul_op",
         "//tensorflow/core/kernels:mkl_concat_op",
         "//tensorflow/core/kernels:mkl_conv_op",
         "//tensorflow/core/kernels:mkl_cwise_ops_common",
@@ -4466,6 +4454,7 @@ tf_cc_test_mkl(
         "//tensorflow/core/kernels:mkl_identity_op",
         "//tensorflow/core/kernels:mkl_input_conversion_op",
         "//tensorflow/core/kernels:mkl_lrn_op",
+        "//tensorflow/core/kernels:mkl_matmul_op",
         "//tensorflow/core/kernels:mkl_pooling_ops",
         "//tensorflow/core/kernels:mkl_qmatmul_op",
         "//tensorflow/core/kernels:mkl_quantize_op",
@@ -4474,6 +4463,7 @@ tf_cc_test_mkl(
         "//tensorflow/core/kernels:mkl_slice_op",
         "//tensorflow/core/kernels:mkl_softmax_op",
         "//tensorflow/core/kernels:mkl_tfconv_op",
+        "//tensorflow/core/kernels:mkl_transpose_op",
     ]),
 )
 
@@ -4763,6 +4753,23 @@ tf_cc_test(
 )
 
 tf_cc_test(
+    name = "framework_run_handler_test",
+    size = "small",
+    srcs = ["framework/run_handler_test.cc"],
+    linkstatic = tf_kernel_tests_linkstatic(),
+    deps = [
+        ":framework_internal",
+        ":lib",
+        ":lib_internal",
+        ":test",
+        ":test_main",
+        "//third_party/eigen3",
+        "@com_google_absl//absl/memory",
+        "@com_google_absl//absl/synchronization",
+    ],
+)
+
+tf_cc_test(
     name = "common_runtime_partitioning_utils_test",
     size = "small",
     srcs = ["common_runtime/partitioning_utils_test.cc"],
@@ -4918,7 +4925,6 @@ tf_cc_test(
         ":test",
         ":test_main",
         ":testlib",
-        "//tensorflow/c/kernels:bitcast_op_lib",
         "//tensorflow/cc:cc_ops",
         "//tensorflow/cc:scope",
         "//tensorflow/core/kernels:cwise_op",
@@ -5539,9 +5545,6 @@ transitive_hdrs(
     ],
 )
 
-# Placeholder for Google-internal load statements.
-load("//tensorflow:tensorflow.bzl", "tf_portable_proto_library")
-
 genrule(
     name = "emscripten_proto_config_lite_runtime",
     outs = ["emscripten_proto_config_lite_runtime.asciipb"],
@@ -5561,7 +5564,7 @@ tf_portable_proto_library(
     prefix_dir = "emscripten_proto_no_rtti",
     proto_deps = [
         ":protos_all_cc",
-        "@protobuf_archive//:protobuf",
+        "@com_google_protobuf//:protobuf",
     ],
     visibility = ["//visibility:public"],
 )

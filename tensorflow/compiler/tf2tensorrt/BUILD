@@ -5,7 +5,6 @@
 
 load(
     "//tensorflow:tensorflow.bzl",
-    "tf_cc_shared_object",
     "tf_cc_test",
     "tf_copts",
     "tf_cuda_library",
@@ -174,6 +173,7 @@ tf_cuda_cc_test(
         "//tensorflow/cc:scope",
         "//tensorflow/core:framework",
         "//tensorflow/core:lib",
+        "//tensorflow/core:lib_internal",
         "//tensorflow/core:protos_all_cc",
         "//tensorflow/core:test",
         "//tensorflow/core:test_main",
@@ -416,7 +416,7 @@ cc_library(
         "//tensorflow/core:lib_proto_parsing",
         "//tensorflow/core:protos_all_cc",
         "@com_google_absl//absl/strings",
-        "@protobuf_archive//:protobuf_headers",
+        "@com_google_protobuf//:protobuf_headers",
     ],
 )
 

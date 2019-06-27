@@ -22,6 +22,7 @@ limitations under the License.
 #include "tensorflow/core/common_runtime/eager/context.h"
 #include "tensorflow/core/common_runtime/eager/eager_operation.h"
 #include "tensorflow/core/common_runtime/eager/execute.h"
+#include "tensorflow/core/common_runtime/function.h"
 #include "tensorflow/core/common_runtime/process_util.h"
 #include "tensorflow/core/distributed_runtime/rpc/rpc_rendezvous_mgr.h"
 #include "tensorflow/core/distributed_runtime/server_lib.h"
@@ -123,8 +124,9 @@ Status EagerServiceImpl::CreateContext(const CreateContextRequest* request,
       SessionOptions(),
       tensorflow::ContextDevicePlacementPolicy::DEVICE_PLACEMENT_SILENT,
       tensorflow::ContextMirroringPolicy::MIRRORING_NONE, request->async(),
-      device_mgr, false, r, nullptr, worker_session->cluster_flr.get(),
-      std::move(rendezvous_creator), worker_session->remote_device_mgr());
+      device_mgr, false, r, GetDefaultCustomKernelCreator(),
+      worker_session->cluster_flr.get(), std::move(rendezvous_creator),
+      worker_session->remote_device_mgr());
 
   std::vector<DeviceAttributes> device_attributes;
   device_mgr->ListDeviceAttributes(&device_attributes);
@@ -180,12 +182,16 @@ Status EagerServiceImpl::ExecuteOp(const Operation& operation,
 
   TF_RETURN_IF_ERROR(op->SetDevice(operation.device().c_str()));
 
-  for (const auto& remote_handle : operation.inputs()) {
-    tensorflow::TensorHandle* handle;
-    TF_RETURN_IF_ERROR(server_context->GetTensorHandle(
-        RemoteTensorHandleInternal(remote_handle), &handle));
+  {
+    profiler::TraceMe activity("EagerService:RemoteTensorHandleInternal",
+                               profiler::TraceMeLevel::kVerbose);
+    for (const auto& remote_handle : operation.inputs()) {
+      tensorflow::TensorHandle* handle;
+      TF_RETURN_IF_ERROR(server_context->GetTensorHandle(
+          RemoteTensorHandleInternal(remote_handle), &handle));
 
-    op->AddInput(handle);
+      op->AddInput(handle);
+    }
   }
 
   for (const auto& attr : operation.attrs()) {
