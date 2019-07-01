@@ -515,7 +515,7 @@ HloCollectiveInstruction::HloCollectiveInstruction(
     const std::vector<ReplicaGroup>& replica_groups,
     const absl::optional<int64>& channel_id)
     : HloChannelInstruction(opcode, shape, channel_id),
-      replica_groups_({replica_groups.begin(), replica_groups.end()}) {
+      replica_groups_(replica_groups) {
   for (auto operand : operands) {
     AppendOperand(operand);
   }
@@ -602,9 +602,9 @@ HloAllToAllInstruction::CloneWithNewOperandsImpl(
 
 HloCollectivePermuteInstruction::HloCollectivePermuteInstruction(
     const Shape& shape, HloInstruction* operand,
-    const std::vector<std::pair<int64, int64>>& source_target_pairs)
-    : HloChannelInstruction(HloOpcode::kCollectivePermute, shape,
-                            absl::nullopt),
+    const std::vector<std::pair<int64, int64>>& source_target_pairs,
+    const absl::optional<int64>& channel_id)
+    : HloChannelInstruction(HloOpcode::kCollectivePermute, shape, channel_id),
       source_target_pairs_(source_target_pairs) {
   AppendOperand(operand);
 }
@@ -650,7 +650,7 @@ HloCollectivePermuteInstruction::CloneWithNewOperandsImpl(
     const Shape& shape, absl::Span<HloInstruction* const> new_operands,
     HloCloneContext* /*context*/) const {
   return absl::make_unique<HloCollectivePermuteInstruction>(
-      shape, new_operands[0], source_target_pairs());
+      shape, new_operands[0], source_target_pairs(), channel_id());
 }
 
 HloReverseInstruction::HloReverseInstruction(const Shape& shape,
@@ -907,6 +907,46 @@ HloBroadcastInstruction::CloneWithNewOperandsImpl(
   CHECK_EQ(new_operands.size(), 1);
   return absl::make_unique<HloBroadcastInstruction>(shape, new_operands[0],
                                                     dimensions());
+}
+
+HloReshapeInstruction::HloReshapeInstruction(const Shape& shape,
+                                             HloInstruction* operand,
+                                             int64 inferred_dimension)
+    : HloInstruction(HloOpcode::kReshape, shape),
+      inferred_dimension_(inferred_dimension) {
+  AppendOperand(operand);
+}
+
+HloInstructionProto HloReshapeInstruction::ToProto() const {
+  HloInstructionProto proto = HloInstruction::ToProto();
+  if (inferred_dimension_ != -1) {
+    proto.add_dimensions(inferred_dimension_);
+  }
+  return proto;
+}
+
+std::vector<string> HloReshapeInstruction::ExtraAttributesToStringImpl(
+    const HloPrintOptions& options) const {
+  if (inferred_dimension() == -1) {
+    return {};
+  }
+  return {StrCat("inferred_dimension={", inferred_dimension(), "}")};
+}
+
+bool HloReshapeInstruction::IdenticalSlowPath(
+    const HloInstruction& other,
+    const std::function<bool(const HloComputation*, const HloComputation*)>&
+        eq_computations) const {
+  const auto& casted_other = static_cast<const HloReshapeInstruction&>(other);
+  return inferred_dimension() == casted_other.inferred_dimension();
+}
+
+std::unique_ptr<HloInstruction> HloReshapeInstruction::CloneWithNewOperandsImpl(
+    const Shape& shape, absl::Span<HloInstruction* const> new_operands,
+    HloCloneContext* context) const {
+  CHECK_EQ(new_operands.size(), 1);
+  return absl::make_unique<HloReshapeInstruction>(shape, new_operands[0],
+                                                  inferred_dimension());
 }
 
 HloMapInstruction::HloMapInstruction(const Shape& shape,
