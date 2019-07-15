@@ -373,6 +373,10 @@ class FuncGraph(ops.Graph):
       # optimizers.
       old_graph_key = self._graph_key
       self._graph_key = graph._graph_key
+      # Inherit the auto_cast_variable_read_dtype, since this should not change
+      # inside a function.
+      old_auto_cast_var_read_dtype = self._auto_cast_variable_read_dtype
+      self._auto_cast_variable_read_dtype = graph._auto_cast_variable_read_dtype
       # pylint: enable=protected-access
 
       with outer_cm as g:
@@ -383,6 +387,7 @@ class FuncGraph(ops.Graph):
           self._device_function_stack = old_device_stack
           self._variable_creator_stack = old_creator_stack
           self._graph_key = old_graph_key
+          self._auto_cast_variable_read_dtype = old_auto_cast_var_read_dtype
     return inner_cm()
 
   @property
@@ -765,7 +770,7 @@ def func_graph_from_py_func(name,
           # TODO(mdan): Push this block higher in tf.function's call stack.
           try:
             return autograph.converted_call(
-                original_func, None,
+                original_func,
                 autograph.ConversionOptions(
                     recursive=True,
                     optional_features=autograph_options,
