@@ -354,6 +354,16 @@ class _EagerDefinedFunction(object):
     input_ops = set(arg.op for arg in inputs)
     operations = [op for op in graph.get_operations() if op not in input_ops]
 
+    graph_output_names = graph._output_names  # pylint: disable=protected-access
+    if (graph_output_names is not None
+        and all(t in graph_output_names for t in outputs)):
+      output_names = [compat.as_bytes(graph_output_names[t]) for t in outputs]
+      if len(set(output_names)) != len(output_names):
+        # There are duplicate names for some reason, probably an invalid
+        # signature. Revert to auto-naming.
+        output_names = []
+    else:
+      output_names = []
     fn = pywrap_tensorflow.TF_GraphToFunction_wrapper(
         graph._c_graph,  # pylint: disable=protected-access
         compat.as_str(name),
@@ -361,7 +371,7 @@ class _EagerDefinedFunction(object):
         [o._c_op for o in operations],  # pylint: disable=protected-access
         [t._as_tf_output() for t in inputs],  # pylint: disable=protected-access
         [t._as_tf_output() for t in outputs],  # pylint: disable=protected-access
-        [],
+        output_names,
         [o._c_op for o in graph.control_outputs],  # pylint: disable=protected-access
         [],  # control_output_names
         None,
@@ -708,16 +718,28 @@ class ConcreteFunction(object):
     possible_gradient_type = _PossibleTapeGradientTypes(
         pywrap_tensorflow.TFE_Py_TapeSetPossibleGradientTypes(args))
     if possible_gradient_type == _PossibleTapeGradientTypes.FIRST_ORDER:
-      # There is a single non-persistent tape active, so the user can only
-      # request first-order gradients from a tape. We can spend less time graph
-      # building since we know this.
-      #
-      # We may still end up computing higher-order gradients, but that'd be
-      # through `tf.gradients`, which can re-write the forward pass and so needs
-      # no preparation here.
-      forward_function, backward_function = (
-          self._tape_functions_for_first_order())
-      return self._tape_backprop_call(args, forward_function, backward_function)
+      if context.executing_eagerly():
+        # There is a single non-persistent tape active, so the user can only
+        # request first-order gradients from a tape. We can spend less time
+        # graph building since we know this.
+        #
+        # We may still end up computing higher-order gradients, but that'd be
+        # through `tf.gradients`, which can re-write the forward pass and so
+        # needs no preparation here.
+        forward_function, backward_function = (
+            self._tape_functions_for_first_order())
+        return self._tape_backprop_call(
+            args, forward_function, backward_function)
+      else:
+        # We can avoid computing second-order gradients in some cases by doing a
+        # delayed rewrite when graph building. Since we know we'll only compute
+        # first-order tape gradients, the delayed rewrite is safe: we won't need
+        # to tell the tape about side outputs.
+        #
+        # TODO(allenl): This case is really dirty. It would be better if we
+        # could temporarily pop all of the current tapes to avoid
+        # accidentally taking second-order gradients.
+        return self._backprop_call_with_delayed_rewrite(args)
     elif possible_gradient_type == _PossibleTapeGradientTypes.HIGHER_ORDER:
       # Either there's a persistent tape watching, or there are multiple nested
       # tapes. Either way, the user may request higher-order gradients. We'll
