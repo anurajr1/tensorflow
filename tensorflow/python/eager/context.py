@@ -313,6 +313,8 @@ class _TensorCacheDeleter(object):
     self._context_id = context_id
 
   def __del__(self):
+    if _tensor_caches_map is None:
+      return
     if self._context_id in _tensor_caches_map:
       del _tensor_caches_map[self._context_id]
 
@@ -1468,9 +1470,6 @@ class Context(object):
   def end_step(self):
     pywrap_tensorflow.TFE_ContextEndStep(self._handle)
 
-_context = None
-_context_lock = threading.Lock()
-
 
 class _EagerDeviceContext(object):
   """Context-manager forcing placement of ops and Tensors on a device."""
@@ -1524,11 +1523,27 @@ class _EagerDeviceContext(object):
     ctx._set_device(old_device_name, old_device_spec)  # pylint: disable=protected-access
 
 
-def _create_context():
+# Do not set directly. Use _set_context.
+_context = None
+_context_lock = threading.Lock()
+
+
+def _set_context_locked(ctx):
   global _context
+  pywrap_tensorflow.TFE_Py_SetEagerContext(ctx)
+  _context = ctx
+
+
+def _set_context(ctx):
+  with _context_lock:
+    _set_context_locked(ctx)
+
+
+def _create_context():
   with _context_lock:
     if _context is None:
-      _context = Context()
+      ctx = Context()
+      _set_context_locked(ctx)
 
 
 def context():

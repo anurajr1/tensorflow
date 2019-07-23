@@ -565,8 +565,10 @@ tf_cc_test(
         "//tensorflow/compiler/xla:test_helpers",
         "//tensorflow/compiler/xla:util",
         "//tensorflow/compiler/xla:window_util",
+        "//tensorflow/compiler/xla/service/gpu:backend_configs",
         "//tensorflow/compiler/xla/tests:hlo_test_base",
         "//tensorflow/compiler/xla/tests:xla_internal_test_main",
+        "//tensorflow/core:test",
         "@com_google_absl//absl/container:flat_hash_map",
     ],
 )
@@ -2778,6 +2780,30 @@ tf_cc_test(
         "//tensorflow/compiler/xla:test_helpers",
         "//tensorflow/compiler/xla:xla_data_proto",
         "//tensorflow/compiler/xla/tests:hlo_test_base",
+        "//tensorflow/core:test",
+    ],
+)
+
+cc_library(
+    name = "memory_space_assignment",
+    srcs = ["memory_space_assignment.cc"],
+    hdrs = ["memory_space_assignment.h"],
+    deps = [
+        ":heap_simulator",
+        ":hlo_pass",
+    ],
+)
+
+tf_cc_test(
+    name = "memory_space_assignment_test",
+    srcs = ["memory_space_assignment_test.cc"],
+    deps = [
+        ":hlo",
+        ":hlo_matchers",
+        ":memory_space_assignment",
+        "//tensorflow/compiler/xla:test",
+        "//tensorflow/compiler/xla/tests:hlo_test_base",
+        "//tensorflow/compiler/xla/tests:xla_internal_test_main",
         "//tensorflow/core:test",
     ],
 )

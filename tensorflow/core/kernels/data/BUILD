@@ -30,6 +30,7 @@ cc_library(
         ":iterator_ops",
         ":name_utils",
         ":range_dataset_op",
+        ":take_dataset_op",
         "//tensorflow/core:core_cpu",
         "//tensorflow/core:core_cpu_internal",
         "//tensorflow/core:framework",
@@ -1119,6 +1120,7 @@ tf_kernel_library(
     srcs = ["multi_device_iterator_ops.cc"],
     deps = [
         ":dataset_utils",
+        ":iterator_ops",
         ":unbounded_thread_pool",
         "//tensorflow/core:core_cpu_internal",
         "//tensorflow/core:framework",
