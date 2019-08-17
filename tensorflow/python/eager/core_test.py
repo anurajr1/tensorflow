@@ -128,7 +128,7 @@ class TFETest(test_util.TensorFlowTestCase):
       self._test_hashable(variable_a, variable_b, True)
       ops.enable_tensor_equality()
       _v2_check(variable_a, variable_b)
-      self._test_hashable(variable_a, variable_b, True)
+      self._test_hashable(variable_a, variable_b, False)
 
       # We only test numpy behaviour in v2 mode since we'd like to match that.
       numpy_a = np.array(1.0)
@@ -179,7 +179,7 @@ class TFETest(test_util.TensorFlowTestCase):
       self._test_hashable(variable_a, variable_b, True)
       ops.enable_tensor_equality()
       _v2_check(variable_a, variable_b)
-      self._test_hashable(variable_a, variable_b, True)
+      self._test_hashable(variable_a, variable_b, False)
 
       numpy_a = np.array(float('nan'))
       numpy_b = np.array(float('nan'))
@@ -224,12 +224,14 @@ class TFETest(test_util.TensorFlowTestCase):
       with self.assertRaises(ValueError):
         bool(tf_a == tf_c)
       self.assertAllEqual(tf_a == tf_c, [True, False])
+      self.assertNotAllEqual(tf_a, tf_c)
       with self.assertRaises(ValueError):
         bool(np_a == np_b)
       self.assertAllEqual(np_a == np_b, [True, True])
       with self.assertRaises(ValueError):
         bool(np_a == np_c)
       self.assertAllEqual(np_a == np_c, [True, False])
+      self.assertNotAllEqual(np_a, np_c)
 
       # Warning even though we technically shouldn't be able to compare here,
       # since the id is the same both TF & numpy will handle lists with the same
@@ -320,19 +322,6 @@ class TFETest(test_util.TensorFlowTestCase):
       has_cpu_device = has_cpu_device or 'CPU' in x
     self.assertTrue(has_cpu_device)
     del ctx
-
-  def testRunMetadata(self):
-    context.enable_run_metadata()
-    t = constant_op.constant(1.0)
-    _ = t + t  # Runs an operation which will be in the RunMetadata
-    run_metadata = context.export_run_metadata()
-    context.disable_run_metadata()
-    step_stats = run_metadata.step_stats
-    self.assertGreater(len(step_stats.dev_stats), 0)
-    cpu_stats = step_stats.dev_stats[0]
-    self.assertEqual('/job:localhost/replica:0/task:0/device:CPU:0',
-                     cpu_stats.device)
-    self.assertGreaterEqual(len(cpu_stats.node_stats), 1)
 
   def testMultiCpuPlacement(self):
     with ops.device('cpu:1'):
@@ -489,13 +478,13 @@ class TFETest(test_util.TensorFlowTestCase):
       x = x.gpu()
       x = x.gpu()
       x = x.cpu()
-      context.async_wait()
+      context.context().executor.wait()
 
     # Invalid device
     with self.assertRaises(RuntimeError):
       x.gpu(context.context().num_gpus() + 1)
-      context.async_wait()
-    context.async_clear_error()
+      context.context().executor.wait()
+    context.context().executor.clear_error()
 
   @test_util.run_gpu_only
   def testCopyScope(self):
@@ -527,7 +516,7 @@ class TFETest(test_util.TensorFlowTestCase):
     def test_fn(v):
       return script_ops.eager_py_func(simple_fn, [v], dtypes.float32)
 
-    async_executor = executor.Executor(enable_async=True)
+    async_executor = executor.new_executor(enable_async=True)
     with context.executor_scope(async_executor):
       test_var = variables.Variable(2.)
       self.assertAllEqual(test_fn(test_var), 3.0)
@@ -581,8 +570,8 @@ class TFETest(test_util.TensorFlowTestCase):
           inputs=[three, five],
           attrs=('transpose_a', False, 'transpose_b', False, 'T',
                  three.dtype.as_datatype_enum))
-      context.async_wait()
-    context.async_clear_error()
+      context.context().executor.wait()
+    context.context().executor.clear_error()
     context.context().execution_mode = context.SYNC
 
   def testExecuteTooManyNumOutputs(self):
@@ -1027,10 +1016,10 @@ class EagerTensorCacheTest(test_util.TensorFlowTestCase):
   def testCacheSkipsTensorsTooLarge(self):
     cache = context._EagerTensorCache(max_items=100, max_tensor_size=3)
     cache.put('1', array_ops.zeros((2, 2)))
-    self.assertEqual(cache.get('1'), None)
+    self.assertIsNone(cache.get('1'))
 
     cache.put('2', array_ops.zeros((2)))
-    self.assertNotEqual(cache.get('2'), None)
+    self.assertIsNotNone(cache.get('2'))
 
 
 if __name__ == '__main__':
